@@ -1,7 +1,13 @@
+import { executeShellTool as executeShell, toolDefinition as executeShellTool } from "./shell/execute-shell";
+import {
+  executeShellPersistentTool as executeShellPersistent,
+  toolDefinition as executeShellPersistentTool
+} from "./shell/execute-shell-persistent.js";
+import {
+  executeContainerTool as executeContainer,
+  toolDefinition as executeContainerTool
+} from "./shell/execute-container";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { toolDefinition as executeShellTool, executeShellTool as executeShell } from "./shell/execute-shell";
-import { toolDefinition as executeShellPersistentTool, executeShellPersistentTool as executeShellPersistent } from "./shell/execute-shell-persistent.js";
-import { toolDefinition as executeContainerTool, executeContainerTool as executeContainer } from "./shell/execute-container";
 
 interface ToolEntry {
   definition: Tool;

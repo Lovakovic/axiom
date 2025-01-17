@@ -1,3 +1,4 @@
+
 import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { StateGraph, MemorySaver, Annotation, messagesStateReducer } from "@langchain/langgraph";
@@ -102,7 +103,6 @@ export class Agent {
         messages: [new HumanMessage(input)],
       },
       {
-        recursionLimit: 50,
         configurable: { thread_id: threadId },
         version: 'v1'
       }
@@ -114,6 +114,13 @@ export class Agent {
           yield chunk.text;
         }
       }
+      // Handle tool execution results
+      // else if (event.event === "on_tool_end") {
+      //   if (event.data.output) {
+      //     // Append tool result with newlines as part of the output
+      //     yield `\n${JSON.stringify(event.data.output, null, 2)}\n`;
+      //   }
+      // }
     }
   }
 }
