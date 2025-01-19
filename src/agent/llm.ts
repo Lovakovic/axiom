@@ -26,8 +26,8 @@ export class Agent {
   private readonly mcpClient: MCPClient;
 
   constructor() {
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY is not set in environment variables");
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error("ANTHROPIC_API_KEY is not set in environment variables");
     }
     this.mcpClient = new MCPClient();
     this.setupAgent();
@@ -53,7 +53,7 @@ export class Agent {
 
     // Create the model with streaming enabled
     const model = new ChatAnthropic({
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: process.env.ANTHROPIC_API_KEY,
       model: "claude-3-5-sonnet-20241022",
       temperature: 0,
       streaming: true
