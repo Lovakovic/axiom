@@ -1,11 +1,11 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { tools, executeHelloTool } from "./tools";
+import { tools, toolsMap } from "./tools";
 
 const server = new Server(
   {
-    name: "minimal-server",
+    name: "shell-server",
     version: "1.0.0",
   },
   {
@@ -20,12 +20,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  switch (request.params.name) {
-    case "hello":
-      return executeHelloTool(request.params.arguments?.['name'] as string);
-    default:
-      throw new Error(`Unknown tool: ${request.params.name}`);
+  const tool = toolsMap.get(request.params.name);
+  if (!tool) {
+    throw new Error(`Unknown tool: ${request.params.name}`);
   }
+  return tool.handler(request.params.arguments?.["command"] as string);
 });
 
 export async function startServer() {

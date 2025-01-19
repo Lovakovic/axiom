@@ -1,29 +1,35 @@
-import { Tool, CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { toolDefinition as executeShellTool, executeShellTool as executeShell } from "./shell/execute-shell";
+import { toolDefinition as executeShellPersistentTool, executeShellPersistentTool as executeShellPersistent } from "./shell/execute-shell-persistent.js";
+import { toolDefinition as executeContainerTool, executeContainerTool as executeContainer } from "./shell/execute-container";
 
-export const tools: Tool[] = [
-  {
-    name: "hello",
-    description: "A simple hello world tool",
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: {
-          type: "string",
-          description: "Name to say hello to",
-        },
-      },
-      required: ["name"],
-    },
-  },
-];
-
-export async function executeHelloTool(name: string): Promise<CallToolResult> {
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Hello, ${name}!`
-      }
-    ]
-  };
+interface ToolEntry {
+  definition: Tool;
+  handler: Function;
 }
+
+// Create a map of all tools with their definitions and handlers
+export const toolsMap = new Map<string, ToolEntry>([
+  ["execute-shell", {
+    definition: executeShellTool,
+    handler: executeShell
+  }],
+  ["execute-shell-persistent", {
+    definition: executeShellPersistentTool,
+    handler: executeShellPersistent
+  }],
+  ["execute-container", {
+    definition: executeContainerTool,
+    handler: executeContainer
+  }]
+]);
+
+// Export all tool definitions
+export const tools: Tool[] = Array.from(toolsMap.values()).map(entry => entry.definition);
+
+// Export all tool implementations for backward compatibility
+export {
+  executeShell,
+  executeShellPersistent,
+  executeContainer,
+};

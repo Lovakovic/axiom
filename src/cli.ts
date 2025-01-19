@@ -1,8 +1,12 @@
 import { Agent } from "./agent/llm.js";
 import readline from 'readline';
 
+// ANSI escape codes for colors
+const YELLOW = '\x1b[33m';
+const RESET = '\x1b[0m';
+
 async function main() {
-  const agent = new Agent("");
+  const agent = new Agent();
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -17,8 +21,17 @@ async function main() {
 
   rl.on('line', async (line) => {
     try {
-      const response = await agent.process(line, threadId);
-      console.log("\nAgent:", response, "\n");
+      // Start a new line for agent's response
+      process.stdout.write("\nAgent: ");
+
+      // Stream the response
+      for await (const response of agent.streamResponse(line, threadId)) {
+        // Print the response in yellow without adding extra newlines
+        process.stdout.write(YELLOW + response + RESET);
+      }
+
+      // Add a blank line after response if not already present
+      process.stdout.write("\n");
     } catch (error) {
       console.error("Error:", error);
     }

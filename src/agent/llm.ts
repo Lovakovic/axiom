@@ -1,10 +1,18 @@
-import { AIMessage, BaseMessage, HumanMessage } from "@langchain/core/messages";
-import { z } from "zod";
+import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { StateGraph, MemorySaver, Annotation, messagesStateReducer } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { MCPClient } from "./client.js";
 import { DynamicStructuredTool } from "@langchain/core/tools";
+import { convertJSONSchemaDraft7ToZod } from "../shared/util/draftToZod";
+import dotenv from "dotenv";
+
+// Load environment variables
+dotenv.config();
+
+const SYSTEM_MESSAGE = `You're a conversational and helpful AI agent with access to various tools. 
+You help user do whatever is requested. You don't bore users with "I'm an AI" type of messages. 
+You're here to help with the tools you have at a disposal. You're brief, concise and up to the point, unless asked otherwise.`;
 
 // Define the state type for our graph
 const StateAnnotation = Annotation.Root({
@@ -15,38 +23,44 @@ const StateAnnotation = Annotation.Root({
 
 export class Agent {
   private app: any;
-  private mcpClient: MCPClient;
+  private readonly mcpClient: MCPClient;
 
-  constructor(apiKey: string) {
+  constructor() {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error("OPENAI_API_KEY is not set in environment variables");
+    }
     this.mcpClient = new MCPClient();
-    this.setupAgent(apiKey);
+    this.setupAgent();
   }
 
-  private async setupAgent(apiKey: string) {
+  private async setupAgent() {
     // Connect to MCP server
     await this.mcpClient.connect("node", ["dist/server/index.js"]);
     const tools = await this.mcpClient.getTools();
 
     // Create tool wrappers for MCP tools
-    const wrappedTools = tools.map((mcpTool) => (new DynamicStructuredTool({
-      name: mcpTool.name,
-      description: mcpTool.description ?? "",
-      func: async (args: Record<string, unknown>) => {
-        const result = await this.mcpClient.executeTool(mcpTool.name, args);
-        return result.content[0].text;
-      },
-      schema: mcpTool.inputSchema,
-    })));
+    const wrappedTools = tools.map((mcpTool) => {
+      return new DynamicStructuredTool({
+        name: mcpTool.name,
+        description: mcpTool.description ?? "",
+        func: async (args: Record<string, unknown>) => {
+          const result = await this.mcpClient.executeTool(mcpTool.name, args);
+          return result.content[0].text;
+        },
+        schema: convertJSONSchemaDraft7ToZod(JSON.stringify(mcpTool.inputSchema)),
+      })
+    });
 
-    // Create the model
+    // Create the model with streaming enabled
     const model = new ChatAnthropic({
-      apiKey,
-      model: "claude-3-sonnet-20240229",
+      apiKey: process.env.OPENAI_API_KEY,
+      model: "claude-3-5-sonnet-20241022",
       temperature: 0,
+      streaming: true
     }).bindTools(wrappedTools);
 
     // Create our tool node
-    const toolNode = new ToolNode(wrappedTools);
+    const toolNode = new ToolNode(wrappedTools, { handleToolErrors: true });
 
     // Define continue condition
     const shouldContinue = (state: typeof StateAnnotation.State) => {
@@ -62,7 +76,7 @@ export class Agent {
     // Define model call function
     const callModel = async (state: typeof StateAnnotation.State) => {
       const messages = state.messages;
-      const response = await model.invoke(messages);
+      const response = await model.invoke([new SystemMessage(SYSTEM_MESSAGE), ...messages]);
       return { messages: [response] };
     };
 
@@ -81,17 +95,25 @@ export class Agent {
     this.app = workflow.compile({ checkpointer });
   }
 
-  async process(input: string, threadId: string = "default") {
-    const state = await this.app.invoke(
+  async* streamResponse(input: string, threadId: string = "default") {
+    // Stream events from the application
+    for await (const event of this.app.streamEvents(
       {
-        messages: [new HumanMessage(input)]
+        messages: [new HumanMessage(input)],
       },
       {
-        configurable: { thread_id: threadId }
+        recursionLimit: 50,
+        configurable: { thread_id: threadId },
+        version: 'v1'
       }
-    );
-
-    const lastMessage = state.messages[state.messages.length - 1];
-    return lastMessage.content;
+    )) {
+      // Handle LLM streaming events
+      if (event.event === "on_llm_stream") {
+        const chunk = event.data.chunk;
+        if (chunk.text) {
+          yield chunk.text;
+        }
+      }
+    }
   }
 }
