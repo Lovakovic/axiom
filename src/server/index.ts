@@ -4,16 +4,22 @@ import {
   CallToolRequestSchema,
   GetPromptRequestSchema,
   ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
   ListToolsRequestSchema,
+  ReadResourceRequestSchema,
   ServerCapabilities
 } from "@modelcontextprotocol/sdk/types.js";
 import { tools, toolsMap } from "./tools";
 import { promptHandlers, SYSTEM_PROMPTS } from "./prompts";
 import { PromptHandlers } from "./prompts/types";
+import { ResourceManager } from "./resources";
 
 const capabilities: ServerCapabilities = {
   tools: {},
   prompts: {
+    listChanged: false
+  },
+  resources: {
     listChanged: false
   }
 };
@@ -27,6 +33,22 @@ const server = new Server(
     capabilities
   }
 );
+
+// Initialize resource manager
+const resourceManager = new ResourceManager();
+
+// Resource handlers
+server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  const resources = await resourceManager.listAllResources();
+  return { resources };
+});
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  const resource = await resourceManager.readResource(request.params.uri);
+  return {
+    contents: [resource]
+  };
+});
 
 // Tool handlers
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -50,7 +72,6 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
   const name = request.params.name as keyof PromptHandlers;
   const promptHandler = promptHandlers[name];
   if (!promptHandler) {
-    console.error(`Prompt not found: ${name}`);
     throw new Error(`Prompt not found: ${name}`);
   }
 

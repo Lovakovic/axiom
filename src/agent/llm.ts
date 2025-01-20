@@ -2,10 +2,11 @@ import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from "@langchain/
 import { SystemMessagePromptTemplate } from "@langchain/core/prompts";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { Annotation, MemorySaver, messagesStateReducer, StateGraph } from "@langchain/langgraph";
-import { ToolNode } from "@langchain/langgraph/prebuilt";
-import { MCPClient } from "./client.js";
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { convertJSONSchemaDraft7ToZod } from "../shared/util/draftToZod";
+import { MCPClient } from "./client";
+import { ToolNode } from "./util/tool-node";
+import { createViewImageTool } from "./local_tools/image_tool";
 import os from 'os';
 import dotenv from "dotenv";
 
@@ -13,7 +14,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 // Define the state type for our graph
-const StateAnnotation = Annotation.Root({
+export const StateAnnotation = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
     reducer: messagesStateReducer,
   }),
@@ -35,10 +36,12 @@ export class Agent {
 
     const mcpClient = new MCPClient();
     await mcpClient.connect("node", ["dist/server/index.js"]);
+
+    // Get MCP tools
     const tools = await mcpClient.getTools();
 
     // Create tool wrappers for MCP tools
-    const wrappedTools = tools.map((mcpTool) => {
+    const wrappedMCPTools = tools.map((mcpTool) => {
       return new DynamicStructuredTool({
         name: mcpTool.name,
         description: mcpTool.description ?? "",
@@ -50,6 +53,12 @@ export class Agent {
       });
     });
 
+    // Create local tools
+    const viewImage = createViewImageTool(mcpClient);
+
+    // Combine all tools
+    const allTools = [...wrappedMCPTools, viewImage];
+
     // Get system prompt and create combined message
     const systemMessage = await Agent.getSystemMessage(mcpClient);
 
@@ -59,10 +68,10 @@ export class Agent {
       model: "claude-3-5-sonnet-20241022",
       temperature: 0,
       streaming: true,
-    }).bindTools(wrappedTools);
+    }).bindTools(allTools);
 
     // Create our tool node
-    const toolNode = new ToolNode(wrappedTools, { handleToolErrors: true });
+    const toolNode = ToolNode.create(allTools, { handleToolErrors: true });
 
     // Define continue condition
     const shouldContinue = (state: typeof StateAnnotation.State) => {
@@ -85,7 +94,7 @@ export class Agent {
     // Create and compile the graph
     const workflow = new StateGraph(StateAnnotation)
       .addNode("agent", callModel)
-      .addNode("tools", toolNode)
+      .addNode("tools", toolNode.invoke)
       .addEdge("__start__", "agent")
       .addConditionalEdges("agent", shouldContinue)
       .addEdge("tools", "agent");
