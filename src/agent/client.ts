@@ -8,7 +8,7 @@ export class MCPClient {
   constructor() {
     this.client = new Client(
       {
-        name: "test-agent",
+        name: "computer-use-agent",
         version: "1.0.0",
       },
       {
