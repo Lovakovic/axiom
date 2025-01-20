@@ -1,7 +1,22 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListToolsRequestSchema,
+  ServerCapabilities
+} from "@modelcontextprotocol/sdk/types.js";
 import { tools, toolsMap } from "./tools";
+import { promptHandlers, SYSTEM_PROMPTS } from "./prompts";
+import { PromptHandlers } from "./prompts/types";
+
+const capabilities: ServerCapabilities = {
+  tools: {},
+  prompts: {
+    listChanged: false
+  }
+};
 
 const server = new Server(
   {
@@ -9,12 +24,11 @@ const server = new Server(
     version: "1.0.0",
   },
   {
-    capabilities: {
-      tools: {},
-    },
+    capabilities
   }
 );
 
+// Tool handlers
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return { tools };
 });
@@ -26,6 +40,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
   return tool.handler(request.params.arguments?.["command"] as string);
 });
+
+// Prompt handlers
+server.setRequestHandler(ListPromptsRequestSchema, async () => {
+  return { prompts: Object.values(SYSTEM_PROMPTS) };
+});
+
+server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+  const name = request.params.name as keyof PromptHandlers;
+  const promptHandler = promptHandlers[name];
+  if (!promptHandler) {
+    console.error(`Prompt not found: ${name}`);
+    throw new Error(`Prompt not found: ${name}`);
+  }
+
+  return promptHandler(request.params.arguments || {});
+});
+
 
 export async function startServer() {
   const transport = new StdioServerTransport();

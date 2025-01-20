@@ -1,18 +1,16 @@
 import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { SystemMessagePromptTemplate } from "@langchain/core/prompts";
 import { ChatAnthropic } from "@langchain/anthropic";
-import { StateGraph, MemorySaver, Annotation, messagesStateReducer } from "@langchain/langgraph";
+import { Annotation, MemorySaver, messagesStateReducer, StateGraph } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { MCPClient } from "./client.js";
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { convertJSONSchemaDraft7ToZod } from "../shared/util/draftToZod";
+import os from 'os';
 import dotenv from "dotenv";
 
 // Load environment variables
 dotenv.config();
-
-const SYSTEM_MESSAGE = `You're a conversational and helpful AI agent with access to various tools. 
-You help user do whatever is requested. You don't bore users with "I'm an AI" type of messages. 
-You're here to help with the tools you have at a disposal. You're brief, concise and up to the point, unless asked otherwise.`;
 
 // Define the state type for our graph
 const StateAnnotation = Annotation.Root({
@@ -22,21 +20,22 @@ const StateAnnotation = Annotation.Root({
 });
 
 export class Agent {
-  private app: any;
+  private readonly app: any;
   private readonly mcpClient: MCPClient;
 
-  constructor() {
+  private constructor(mcpClient: MCPClient, app: any) {
+    this.mcpClient = mcpClient;
+    this.app = app;
+  }
+
+  static async init(): Promise<Agent> {
     if (!process.env.ANTHROPIC_API_KEY) {
       throw new Error("ANTHROPIC_API_KEY is not set in environment variables");
     }
-    this.mcpClient = new MCPClient();
-    this.setupAgent();
-  }
 
-  private async setupAgent() {
-    // Connect to MCP server
-    await this.mcpClient.connect("node", ["dist/server/index.js"]);
-    const tools = await this.mcpClient.getTools();
+    const mcpClient = new MCPClient();
+    await mcpClient.connect("node", ["dist/server/index.js"]);
+    const tools = await mcpClient.getTools();
 
     // Create tool wrappers for MCP tools
     const wrappedTools = tools.map((mcpTool) => {
@@ -44,19 +43,22 @@ export class Agent {
         name: mcpTool.name,
         description: mcpTool.description ?? "",
         func: async (args: Record<string, unknown>) => {
-          const result = await this.mcpClient.executeTool(mcpTool.name, args);
+          const result = await mcpClient.executeTool(mcpTool.name, args);
           return result.content[0].text;
         },
         schema: convertJSONSchemaDraft7ToZod(JSON.stringify(mcpTool.inputSchema)),
-      })
+      });
     });
+
+    // Get system prompt and create combined message
+    const systemMessage = await Agent.getSystemMessage(mcpClient);
 
     // Create the model with streaming enabled
     const model = new ChatAnthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
       model: "claude-3-5-sonnet-20241022",
       temperature: 0,
-      streaming: true
+      streaming: true,
     }).bindTools(wrappedTools);
 
     // Create our tool node
@@ -73,10 +75,10 @@ export class Agent {
       return "__end__";
     };
 
-    // Define model call function
+    // Define model call function with system message
     const callModel = async (state: typeof StateAnnotation.State) => {
       const messages = state.messages;
-      const response = await model.invoke([new SystemMessage(SYSTEM_MESSAGE), ...messages]);
+      const response = await model.invoke([systemMessage, ...messages]);
       return { messages: [response] };
     };
 
@@ -92,7 +94,37 @@ export class Agent {
     const checkpointer = new MemorySaver();
 
     // Compile the graph
-    this.app = workflow.compile({ checkpointer });
+    const app = workflow.compile({ checkpointer });
+
+    return new Agent(mcpClient, app);
+  }
+
+  private static async getSystemMessage(mcpClient: MCPClient): Promise<SystemMessage> {
+    try {
+      // Get the system prompt from the server with current system info
+      const promptResult = await mcpClient.getPrompt("shell-system", {
+        user: os.userInfo().username,
+        OS: `${os.type()} ${os.release()}`,
+        shell_type: process.env.SHELL ?? "Unknown",
+        date_time: new Date().toISOString(),
+      });
+
+      // Create a template that combines base message and server instructions
+      const baseSystemMessage = SystemMessagePromptTemplate.fromTemplate(
+        "You are a helpful AI assistant. You're brief, concise and up to the point, unless asked otherwise.\n\n{serverInstructions}"
+      );
+
+      // Format the template with the server's instructions
+      return await baseSystemMessage.format({
+        serverInstructions: promptResult.messages[0].content.text,
+      });
+    } catch (error) {
+      console.error("Failed to get system prompt:", error);
+      // Fallback to basic system message if server prompt fails
+      return new SystemMessage(
+        "You are a helpful AI assistant. You're brief, concise and up to the point, unless asked otherwise."
+      );
+    }
   }
 
   async* streamResponse(input: string, threadId: string = "default") {
@@ -103,7 +135,7 @@ export class Agent {
       },
       {
         configurable: { thread_id: threadId },
-        version: 'v1'
+        version: "v1",
       }
     )) {
       // Handle LLM streaming events
@@ -113,13 +145,6 @@ export class Agent {
           yield chunk.text;
         }
       }
-      // Handle tool execution results
-      // else if (event.event === "on_tool_end") {
-      //   if (event.data.output) {
-      //     // Append tool result with newlines as part of the output
-      //     yield `\n${JSON.stringify(event.data.output, null, 2)}\n`;
-      //   }
-      // }
     }
   }
 }

@@ -6,7 +6,7 @@ const YELLOW = '\x1b[33m';
 const RESET = '\x1b[0m';
 
 async function main() {
-  const agent = new Agent();
+  const agent = await Agent.init();
 
   const rl = readline.createInterface({
     input: process.stdin,

@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { Tool, CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolResult, GetPromptResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 
 export class MCPClient {
   private readonly client: Client;
@@ -14,10 +14,12 @@ export class MCPClient {
       {
         capabilities: {
           tools: {},
+          prompts: {},
         },
       }
     );
   }
+
 
   async connect(command: string, args: string[] = []) {
     const transport = new StdioClientTransport({ command, args });
@@ -36,5 +38,19 @@ export class MCPClient {
       arguments: args
     });
     return result as CallToolResult;
+  }
+
+  async getPrompt(name: string, arguments_?: Record<string, unknown>): Promise<GetPromptResult> {
+    // Convert all argument values to strings for MCP protocol compliance
+    const stringArgs = arguments_ ?
+      Object.fromEntries(
+        Object.entries(arguments_).map(([key, value]) => [key, String(value)])
+      ) :
+      undefined;
+
+    return await this.client.getPrompt({
+      name,
+      arguments: stringArgs
+    });
   }
 }
