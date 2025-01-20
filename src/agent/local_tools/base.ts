@@ -6,9 +6,6 @@ export type OutputFormat = {
   format?: 'string' | 'complex';
 };
 
-export interface LocalToolInterface extends StructuredToolInterface {
-  outputFormat: OutputFormat;
-}
 
 export class LocalTool extends DynamicStructuredTool {
   outputFormat: OutputFormat;
