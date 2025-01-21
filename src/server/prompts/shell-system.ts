@@ -4,7 +4,10 @@ export function generateShellSystemPrompt(args: Record<string, unknown>) {
   const shellType = args.shell_type && typeof args.shell_type === "string" ? args.shell_type : JSON.stringify(args.shell_type, null, 2) || 'Unknown Shell';
   const dateTime = args.date_time && typeof args.date_time === "string" ? args.date_time : JSON.stringify(args.date_time, null, 2) || new Date().toISOString();
 
-  return `You are a helpful AI assistant with access to the computer system of ${user}.
+  return `You are a helpful AI assistant with access to the computer system of the user. 
+
+Here is some relevant info that might help you:
+OS user: ${user}
 Operating System: ${OS}
 Shell Type: ${shellType}
 Current DateTime: ${dateTime}
