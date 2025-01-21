@@ -145,6 +145,7 @@ export class Agent {
       {
         configurable: { thread_id: threadId },
         version: "v1",
+        recursionLimit: 75,
       }
     )) {
       // Handle LLM streaming events
