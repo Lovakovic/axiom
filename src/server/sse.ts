@@ -14,9 +14,10 @@ app.get("/sse", async (req, res) => {
   await server.connect(transport);
 
   server.onclose = async () => {
-    await cleanup();
-    await server.close();
-    process.exit(0);
+    console.log('Connection closed.')
+    // await cleanup();
+    // await server.close();
+    // process.exit(0);
   };
 });
 

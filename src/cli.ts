@@ -3,7 +3,7 @@ import readline from 'readline';
 
 // ANSI escape codes for colors
 const YELLOW = '\x1b[33m';
-const ORANGE = '\x1b[34m';
+const BLUE = '\x1b[34m';
 const RESET = '\x1b[0m';
 
 // Interface for tracking tool streaming state
@@ -49,16 +49,15 @@ async function main() {
                             accumulatedInput: ''
                         });
                         // Start a new line for the tool
-                        process.stdout.write("\n" + ORANGE + event.tool.name + ": " + RESET);
+                        process.stdout.write("\n" + BLUE + event.tool.name + ": " + RESET);
                         break;
 
                     case "tool_input":
                         const tool = activeTools.get(event.toolId);
                         if (tool) {
+                            // Instead of replacing the entire line, just append the new content
+                            process.stdout.write(BLUE + event.content + RESET);
                             tool.accumulatedInput += event.content;
-                            // Update the line for this specific tool
-                            process.stdout.write("\r" + ORANGE + tool.name + ": " +
-                                tool.accumulatedInput + RESET + ' '.repeat(20));
                         }
                         break;
                 }
