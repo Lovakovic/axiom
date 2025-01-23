@@ -1,12 +1,10 @@
-import {Agent} from "./agent/llm.js";
+import { Agent } from "./agent/llm.js";
 import readline from 'readline';
 
-// ANSI escape codes for colors
 const YELLOW = '\x1b[33m';
 const BLUE = '\x1b[34m';
 const RESET = '\x1b[0m';
 
-// Interface for tracking tool streaming state
 interface ToolStreamState {
     name: string;
     accumulatedInput: string;
@@ -14,28 +12,57 @@ interface ToolStreamState {
 
 async function main() {
     const threadId = Math.random().toString(36).substring(7);
-    const agent = await Agent.init(threadId);
+    let agent = await Agent.init(threadId);
     let ctrlCCount = 0;
     let ctrlCTimeout: NodeJS.Timeout | null = null;
     let isCurrentlyInterrupted = false;
     let accumulatedOutput = '';
-
     let wasInterrupted = false;
+    let isProcessingInput = false;
+
+    // Create a queue for buffering inputs during processing
+    const inputQueue: string[] = [];
 
     const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout
     });
 
+    async function processNextInput() {
+        if (inputQueue.length === 0 || isProcessingInput) {
+            return;
+        }
+
+        isProcessingInput = true;
+        const line = inputQueue.shift()!;
+
+        try {
+            await handleLine(line);
+        } finally {
+            isProcessingInput = false;
+            // Process next item in queue if any
+            if (inputQueue.length > 0) {
+                setImmediate(processNextInput);
+            }
+        }
+    }
+
     // Handle Ctrl+C
     process.on('SIGINT', async () => {
         ctrlCCount++;
+        console.log('\n[DEBUG] Received interrupt signal');
+        console.log('[DEBUG] Current ctrlCCount:', ctrlCCount);
 
         if (ctrlCCount === 1) {
             isCurrentlyInterrupted = true;
             wasInterrupted = true;
-            await agent.interrupt();
-            console.log('\nCancelling current generation...');
+
+            try {
+                await agent.interrupt();
+                console.log('Successfully interrupted agent');
+            } catch (error) {
+                console.error('[ERROR] Failed to interrupt agent:', error);
+            }
 
             if (ctrlCTimeout) {
                 clearTimeout(ctrlCTimeout);
@@ -44,77 +71,100 @@ async function main() {
                 ctrlCCount = 0;
             }, 1000);
         } else if (ctrlCCount === 3) {
-            console.log('\nExiting...');
+            console.log('\nForce exiting...');
             process.exit(0);
         }
 
-        process.stdout.write('\n');
+        // Clear the input queue on interruption
+        inputQueue.length = 0;
         rl.prompt();
     });
 
-    console.log("Agent ready! Type your messages (Ctrl+C to cancel, press 3 times to exit)");
+    async function handleLine(line: string) {
+        console.log("[DEBUG] Processing line:", line);
 
-    rl.setPrompt('> ');
-    rl.prompt();
+        if (!line.trim()) {
+            rl.prompt();
+            return;
+        }
 
-    rl.on("line", async (line) => {
         try {
-            console.log("\nProcessing new input, wasInterrupted:", wasInterrupted);
-
-            if (wasInterrupted) {
-                console.log("Attempting to reset agent state...");
-                await agent.resetState();
+            if (wasInterrupted || isCurrentlyInterrupted) {
+                console.log("[DEBUG] Creating new agent after interruption");
+                const newAgent = await Agent.init(threadId);
+                agent = newAgent;
                 wasInterrupted = false;
-                console.log("Agent state reset complete");
+                isCurrentlyInterrupted = false;
             }
 
-            isCurrentlyInterrupted = false;
             process.stdout.write("\nAgent: ");
             const activeTools = new Map<string, ToolStreamState>();
             accumulatedOutput = '';
 
-            console.log("Starting stream response...");
-            for await (const event of agent.streamResponse(line)) {
-                // Break out if we've been interrupted
-                if (isCurrentlyInterrupted) {
-                    console.log("Stream interrupted, breaking...");
-                    break;
+            const controller = new AbortController();
+            console.log("[DEBUG] Starting stream response");
+
+            try {
+                for await (const event of agent.streamResponse(line, {
+                    signal: controller.signal
+                })) {
+                    // if (isCurrentlyInterrupted) {
+                    //     console.log("[DEBUG] Detected interruption, aborting stream");
+                    //     controller.abort();
+                    //     break;
+                    // }
+
+                    switch (event.type) {
+                        case "text":
+                            accumulatedOutput += event.content;
+                            process.stdout.write(YELLOW + event.content + RESET);
+                            break;
+
+                        case "tool_start":
+                            activeTools.set(event.tool.id, {
+                                name: event.tool.name,
+                                accumulatedInput: ''
+                            });
+                            process.stdout.write("\n" + BLUE + event.tool.name + ": " + RESET);
+                            break;
+
+                        case "tool_input":
+                            const tool = activeTools.get(event.toolId);
+                            if (tool) {
+                                process.stdout.write(BLUE + event.content + RESET);
+                                tool.accumulatedInput += event.content;
+                            }
+                            break;
+                    }
                 }
-
-                switch (event.type) {
-                    case "text":
-                        accumulatedOutput += event.content;
-                        process.stdout.write(YELLOW + event.content + RESET);
-                        break;
-
-                    case "tool_start":
-                        activeTools.set(event.tool.id, {
-                            name: event.tool.name,
-                            accumulatedInput: ''
-                        });
-                        process.stdout.write("\n" + BLUE + event.tool.name + ": " + RESET);
-                        break;
-
-                    case "tool_input":
-                        const tool = activeTools.get(event.toolId);
-                        if (tool) {
-                            process.stdout.write(BLUE + event.content + RESET);
-                            tool.accumulatedInput += event.content;
-                        }
-                        break;
+            } catch (error) {
+                if (!isCurrentlyInterrupted) {
+                    console.error("[ERROR] Stream processing error:", error);
                 }
+            } finally {
+                console.log("[DEBUG] Stream processing complete");
+                if (activeTools.size > 0) {
+                    process.stdout.write("\n");
+                }
+                activeTools.clear();
             }
-
-            if (activeTools.size > 0) {
-                process.stdout.write("\n");
-            }
-            activeTools.clear();
         } catch (error) {
-            console.error("\nError:", error);
+            console.error("[ERROR] Error in message processing:", error);
+        } finally {
+            rl.prompt();
         }
-        rl.prompt();
+    }
+
+    // Handle line input by queueing
+    rl.on('line', (line) => {
+        console.log("[DEBUG] Line event received:", line);
+        inputQueue.push(line);
+        setImmediate(processNextInput);
     });
 
+    console.log("Agent ready! Type your messages (Ctrl+C to cancel, press 3 times to exit)");
+    rl.setPrompt('> ');
+    rl.prompt();
 }
 
 main().catch(console.error);

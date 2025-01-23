@@ -1,7 +1,7 @@
 import {AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage} from "@langchain/core/messages";
 import {SystemMessagePromptTemplate} from "@langchain/core/prompts";
 import {ChatAnthropic} from "@langchain/anthropic";
-import {Annotation, MemorySaver, messagesStateReducer, StateGraph} from "@langchain/langgraph";
+import {Annotation, CompiledStateGraph, MemorySaver, messagesStateReducer, StateGraph} from "@langchain/langgraph";
 import {DynamicStructuredTool} from "@langchain/core/tools";
 import {convertJSONSchemaDraft7ToZod} from "../shared/util/draftToZod";
 import {MCPClient} from "./client";
@@ -59,6 +59,34 @@ export class Agent {
         };
     }
 
+    private static async getSystemMessage(mcpClient: MCPClient): Promise<SystemMessage> {
+        try {
+            // Get the system prompt from the server with current system info
+            const promptResult = await mcpClient.getPrompt("shell-system", {
+                user: os.userInfo().username,
+                OS: `${os.type()} ${os.release()}`,
+                shell_type: process.env.SHELL ?? "Unknown",
+                date_time: new Date().toISOString(),
+            });
+
+            // Create a template that combines base message and server instructions
+            const baseSystemMessage = SystemMessagePromptTemplate.fromTemplate(
+                "You are a helpful AI assistant. You're brief, concise and up to the point, unless asked otherwise.\n\n{serverInstructions}"
+            );
+
+            // Format the template with the server's instructions
+            return await baseSystemMessage.format({
+                serverInstructions: promptResult.messages[0].content.text,
+            });
+        } catch (error) {
+            console.error("Failed to get system prompt:", error);
+            // Fallback to basic system message if server prompt fails
+            return new SystemMessage(
+                "You are a helpful AI assistant. You're brief, concise and up to the point, unless asked otherwise."
+            );
+        }
+    }
+
     static async init(threadId: string): Promise<Agent> {
         if (!process.env.ANTHROPIC_API_KEY) {
             throw new Error("ANTHROPIC_API_KEY is not set in environment variables");
@@ -89,9 +117,6 @@ export class Agent {
         // Combine all tools
         const allTools = [...wrappedMCPTools, viewImage];
 
-        // Get system prompt and create combined message
-        const systemMessage = await Agent.getSystemMessage(mcpClient);
-
         // Create the model with streaming enabled
         const model = new ChatAnthropic({
             apiKey: process.env.ANTHROPIC_API_KEY,
@@ -100,12 +125,13 @@ export class Agent {
             streaming: true,
         }).bindTools(allTools);
 
-        // Create our tool node
+        const systemMessage = await Agent.getSystemMessage(mcpClient);
+
+        // Create our tool node with abort signal handling
         const toolNode = ToolNode.create(allTools, {handleToolErrors: true});
 
         // Define continue condition
         const shouldContinue = (state: typeof StateAnnotation.State) => {
-            // If interrupted, end the graph
             if (state.isInterrupted) {
                 return "__end__";
             }
@@ -113,143 +139,113 @@ export class Agent {
             const messages = state.messages;
             const lastMessage = messages[messages.length - 1];
 
-            // Only continue to tools if we have an AI message with tool calls
             if (lastMessage?.getType() === "ai" && (lastMessage as AIMessage).tool_calls?.length) {
                 return "tools";
             }
             return "__end__";
         };
 
-        // Define model call function with system message
-        const callModel = async (state: typeof StateAnnotation.State) => {
-            console.log('Calling model, interrupted:', state.isInterrupted)
-            // If we're interrupted, don't add any new messages
+        // Define model call function with system message and signal handling
+        const callModel = async (state: typeof StateAnnotation.State, config?: RunnableConfig) => {
+            console.log('Calling model, interrupted:', state.isInterrupted);
+
             if (state.isInterrupted || state.messages.length === 0) {
                 return {};
             }
 
             const messages = state.messages;
-            const response = await model.invoke([systemMessage, ...messages]);
+
+            // Pass the signal to model.invoke
+            const response = await model.invoke([systemMessage, ...messages], {
+                signal: config?.signal,
+            });
+
             return {messages: [response]};
         };
 
         // Create and compile the graph
         const workflow = new StateGraph(StateAnnotation)
-          .addNode("agent", callModel)
-          .addNode("tools", toolNode.invoke)
-          .addEdge("__start__", "agent")
-          .addConditionalEdges("agent", shouldContinue)
-          .addEdge("tools", "agent");
+            .addNode("agent", callModel)
+            .addNode("tools", toolNode.invoke)
+            .addEdge("__start__", "agent")
+            .addConditionalEdges("agent", shouldContinue)
+            .addEdge("tools", "agent");
 
-        // Initialize memory
         const checkpointer = new MemorySaver();
-
-        // Compile the graph
         const app = workflow.compile({checkpointer});
 
         return new Agent(mcpClient, app, threadId);
     }
 
-    private static async getSystemMessage(mcpClient: MCPClient): Promise<SystemMessage> {
-        try {
-            // Get the system prompt from the server with current system info
-            const promptResult = await mcpClient.getPrompt("shell-system", {
-                user: os.userInfo().username,
-                OS: `${os.type()} ${os.release()}`,
-                shell_type: process.env.SHELL ?? "Unknown",
-                date_time: new Date().toISOString(),
-            });
-
-            // Create a template that combines base message and server instructions
-            const baseSystemMessage = SystemMessagePromptTemplate.fromTemplate(
-              "You are a helpful AI assistant. You're brief, concise and up to the point, unless asked otherwise.\n\n{serverInstructions}"
-            );
-
-            // Format the template with the server's instructions
-            return await baseSystemMessage.format({
-                serverInstructions: promptResult.messages[0].content.text,
-            });
-        } catch (error) {
-            console.error("Failed to get system prompt:", error);
-            // Fallback to basic system message if server prompt fails
-            return new SystemMessage(
-              "You are a helpful AI assistant. You're brief, concise and up to the point, unless asked otherwise."
-            );
-        }
-    }
-
     async interrupt() {
-        // Pass the thread config when interrupting
         await this.app.invoke({ isInterrupted: true }, this.threadConfig);
     }
 
-    async resetState() {
-        // Reset the entire state
-        await this.app.invoke(
-          {
-              messages: [],
-              isInterrupted: false
-          },
-          this.threadConfig
-        );
-    }
-
-
-    async *streamResponse(input: string): AsyncGenerator<StreamEvent> {
+    async *streamResponse(input: string, config: { signal?: AbortSignal } = {}): AsyncGenerator<StreamEvent> {
         let currentToolId: string | null = null;
 
-        for await (const event of this.app.streamEvents(
-          {
-              messages: [new HumanMessage(input)],
-              isInterrupted: false
-          },
-          this.threadConfig
-        )) {
-            if (event.event !== "on_chat_model_stream") {
-                continue;
-            }
-            const chunk = event.data.chunk as AIMessageChunk;
+        // Create combined config with signal
+        const combinedConfig = {
+            ...this.threadConfig,
+            ...config,
+        };
 
-            for (const contentItem of chunk.content) {
-                if (typeof contentItem === 'string') {
-                    yield { type: "text", content: contentItem };
+        try {
+            for await (const event of this.app.streamEvents(
+                {
+                    messages: [new HumanMessage(input)],
+                    isInterrupted: false
+                },
+                combinedConfig
+            )) {
+                if (event.event !== "on_chat_model_stream") {
+                    continue;
                 }
-                else if (contentItem.type === "text_delta") {
-                    if (contentItem.text) {
-                        yield { type: "text", content: contentItem.text };
+                const chunk = event.data.chunk as AIMessageChunk;
+
+                for (const contentItem of chunk.content) {
+                    if (typeof contentItem === 'string') {
+                        yield { type: "text", content: contentItem };
                     }
-                }
-                else if (contentItem.type === "tool_use") {
-                    // Store the current tool ID
-                    currentToolId = contentItem.id;
-
-                    // Emit a tool start event
-                    yield {
-                        type: "tool_start",
-                        tool: {
-                            name: contentItem.name,
-                            id: contentItem.id
+                    else if (contentItem.type === "text_delta") {
+                        if (contentItem.text) {
+                            yield { type: "text", content: contentItem.text };
                         }
-                    };
-
-                    // Then emit the tool input if it exists
-                    if (contentItem.input) {
+                    }
+                    else if (contentItem.type === "tool_use") {
+                        currentToolId = contentItem.id;
                         yield {
-                            type: "tool_input",
-                            content: contentItem.input,
-                            toolId: contentItem.id
+                            type: "tool_start",
+                            tool: {
+                                name: contentItem.name,
+                                id: contentItem.id
+                            }
                         };
+                        if (contentItem.input) {
+                            yield {
+                                type: "tool_input",
+                                content: contentItem.input,
+                                toolId: contentItem.id
+                            };
+                        }
+                    }
+                    else if (contentItem.type === "input_json_delta") {
+                        if (contentItem.input && currentToolId) {
+                            yield {
+                                type: "tool_input",
+                                content: contentItem.input,
+                                toolId: currentToolId
+                            };
+                        }
                     }
                 }
-                else if (contentItem.type === "input_json_delta") {
-                    if (contentItem.input && currentToolId) {
-                        yield {
-                            type: "tool_input",
-                            content: contentItem.input,
-                            toolId: currentToolId
-                        };
-                    }
-                }
+            }
+        } catch (error) {
+            // Check if this is an abort error
+            if ((error as Error).name === 'AbortError') {
+                console.log('[DEBUG] Stream aborted');
+            } else {
+                throw error;  // Re-throw non-abort errors
             }
         }
     }
