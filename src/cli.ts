@@ -79,8 +79,6 @@ export class CLI {
     private handleSignals() {
         process.on('SIGINT', async () => {
             this.ctrlCCount++;
-            console.log('\n[DEBUG] Received interrupt signal');
-            console.log('[DEBUG] Current ctrlCCount:', this.ctrlCCount);
 
             if (this.ctrlCCount === 1) {
                 // First time we see Ctrl+C
@@ -93,7 +91,6 @@ export class CLI {
 
                 // Abort any ongoing LLM streaming
                 if (this.currentAbortController) {
-                    console.log("[DEBUG] Aborting current stream");
                     this.currentAbortController.abort();
                     this.currentAbortController = null;
                 }
@@ -102,7 +99,6 @@ export class CLI {
                 this.ctrlCTimeout = setTimeout(() => {
                     this.ctrlCCount = 0;
                     this.isCurrentlyInterrupted = false;
-                    console.log("[DEBUG] Reset interrupt state");
                 }, 1000);
 
                 // Clear queued lines & reset
@@ -114,7 +110,7 @@ export class CLI {
 
             } else if (this.ctrlCCount === 3) {
                 // Hard exit
-                console.log('\nForce exiting...');
+                console.log('\nExiting...');
                 process.exit(0);
             }
         });
@@ -123,9 +119,6 @@ export class CLI {
     private setupReadlineHandlers() {
         this.rl.setPrompt('> ');
         this.rl.on('line', (line) => {
-            console.log("[DEBUG] Line event received:", line);
-            console.log("[DEBUG] Current queue length:", this.inputQueue.length);
-            console.log("[DEBUG] Is processing:", this.isProcessingInput);
 
             this.inputQueue.push(line);
             setImmediate(() => this.processNextInput());
@@ -164,15 +157,12 @@ export class CLI {
      * Called for every line the user enters.
      */
     private async handleLine(line: string) {
-        console.log("[DEBUG] Processing line:", line);
-
         if (!line.trim()) {
             this.rl.prompt();
             return;
         }
 
         if (!this.agent) {
-            console.error("[ERROR] Agent not initialized");
             this.rl.prompt();
             return;
         }
@@ -181,10 +171,6 @@ export class CLI {
             // If we had an interruption previously, re-init the agent
             // but preserve the conversationBuffer for context.
             if (this.wasInterrupted) {
-                console.log("[DEBUG] Creating new agent after interruption");
-                console.log("[DEBUG] (For debug) Old partial buffer snippet:",
-                    this.debugTextBuffer.substring(0, 50) + "..."
-                );
                 this.agent = await Agent.init();
             }
 
@@ -198,7 +184,6 @@ export class CLI {
 
             // 2) Prepare streaming
             this.currentAbortController = new AbortController();
-            console.log("[DEBUG] Starting stream response");
 
             // 3) Call our updated streamResponse
             for await (const event of this.agent.streamResponse(line, this.threadId, {
@@ -207,7 +192,6 @@ export class CLI {
             })) {
                 // Break early if the user interrupted
                 if (this.isCurrentlyInterrupted) {
-                    console.log("[DEBUG] Detected interruption, breaking stream");
                     this.isProcessingInput = false;
                     break;
                 }
@@ -255,7 +239,6 @@ export class CLI {
                 console.error("[ERROR] Stream processing error:", error);
             }
         } finally {
-            console.log("[DEBUG] Stream processing complete");
             this.currentAbortController = null;
 
             if (!this.isCurrentlyInterrupted) {
@@ -267,7 +250,6 @@ export class CLI {
                 this.conversationBuffer = [];
                 this.debugTextBuffer = '';
                 this.wasInterrupted = false;
-                console.log("[DEBUG] Cleared conversation buffer after successful completion");
             }
 
             if (!this.isCurrentlyInterrupted) {
