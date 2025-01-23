@@ -105,6 +105,7 @@ export class Agent {
         // Define model call function with system message
         const callModel = async (state: typeof StateAnnotation.State) => {
             const messages = state.messages;
+            console.log("Messages:", messages.map((m) => m.content));
             const response = await model.invoke([systemMessage, ...messages]);
             return {messages: [response]};
         };
@@ -154,13 +155,28 @@ export class Agent {
         }
     }
 
+    // Just adds messages to state,
+    async addMessages(messages: BaseMessage[]) {
+        await this.app.updateState({}, { messages }, 'callModel');
+    }
 
-
-    async *streamResponse(input: string, threadId: string, options?: { signal: AbortSignal }): AsyncGenerator<StreamEvent> {
+    async *streamResponse(
+        input: string,
+        threadId: string,
+        options?: {
+            signal?: AbortSignal;
+            previousBuffer?: string;
+        }
+    ): AsyncGenerator<StreamEvent> {
         let currentToolId: string | null = null;
 
+        // Construct messages array based on whether we have a previous buffer
+        const messages = options?.previousBuffer
+            ? [new AIMessage(options.previousBuffer), new HumanMessage(input)]
+            : [new HumanMessage(input)];
+
         for await (const event of this.app.streamEvents(
-            { messages: [new HumanMessage(input)] },
+            { messages },
             {
                 configurable: { thread_id: threadId },
                 version: "v2",

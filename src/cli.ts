@@ -24,6 +24,8 @@ async function main() {
     const inputQueue: string[] = [];
     let currentAbortController: AbortController | null = null;
 
+    let textBuffer = '';  // Buffer for LLM text output
+
     // Initialize readline interface
     let rl = readline.createInterface({
         input: process.stdin,
@@ -121,8 +123,9 @@ async function main() {
         try {
             if (wasInterrupted) {
                 console.log("[DEBUG] Creating new agent after interruption");
+                console.log("[DEBUG] Using preserved buffer:", textBuffer.substring(0, 50) + "...");
                 agent = await Agent.init();
-                wasInterrupted = false;
+                // Don't reset wasInterrupted here anymore
             }
 
             process.stdout.write("\nAgent: ");
@@ -133,7 +136,10 @@ async function main() {
             console.log("[DEBUG] Starting stream response");
 
             try {
-                for await (const event of agent.streamResponse(line, threadId, { signal: currentAbortController?.signal })) {
+                for await (const event of agent.streamResponse(line, threadId, {
+                    signal: currentAbortController?.signal,
+                    previousBuffer: wasInterrupted ? textBuffer : undefined
+                })) {
                     if (isCurrentlyInterrupted) {
                         console.log("[DEBUG] Detected interruption, breaking stream");
                         isProcessingInput = false; // Reset processing flag on interruption
@@ -142,6 +148,7 @@ async function main() {
 
                     switch (event.type) {
                         case "text":
+                            textBuffer += event.content;  // Add to buffer
                             accumulatedOutput += event.content;
                             process.stdout.write(YELLOW + event.content + RESET);
                             break;
@@ -174,6 +181,13 @@ async function main() {
                 }
                 activeTools.clear();
                 currentAbortController = null;
+
+                // Only clear buffer and wasInterrupted if we completed normally
+                if (!isCurrentlyInterrupted) {
+                    textBuffer = '';
+                    wasInterrupted = false;
+                    console.log("[DEBUG] Cleared buffer after successful completion");
+                }
             }
         } catch (error) {
             console.error("[ERROR] Error in message processing:", error);
