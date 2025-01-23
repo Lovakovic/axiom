@@ -45,6 +45,8 @@ export class MCPClient {
     const result = await this.client.callTool({
       name,
       arguments: args
+    }, undefined, {
+      timeout: 300000 // 5 min
     });
     return result as CallToolResult;
   }
