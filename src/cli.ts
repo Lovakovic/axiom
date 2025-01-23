@@ -22,6 +22,7 @@ async function main() {
 
     // Create a queue for buffering inputs during processing
     const inputQueue: string[] = [];
+    let currentAbortController: AbortController | null = null;
 
     // Initialize readline interface
     let rl = readline.createInterface({
@@ -85,6 +86,14 @@ async function main() {
             if (ctrlCTimeout) {
                 clearTimeout(ctrlCTimeout);
             }
+
+            // Abort any ongoing stream
+            if (currentAbortController) {
+                console.log("[DEBUG] Aborting current stream");
+                currentAbortController.abort();
+                currentAbortController = null;
+            }
+
             ctrlCTimeout = setTimeout(() => {
                 ctrlCCount = 0;
                 isCurrentlyInterrupted = false;
@@ -120,11 +129,11 @@ async function main() {
             const activeTools = new Map<string, ToolStreamState>();
             accumulatedOutput = '';
 
-            const controller = new AbortController();
+            currentAbortController = new AbortController();
             console.log("[DEBUG] Starting stream response");
 
             try {
-                for await (const event of agent.streamResponse(line, threadId)) {
+                for await (const event of agent.streamResponse(line, threadId, { signal: currentAbortController?.signal })) {
                     if (isCurrentlyInterrupted) {
                         console.log("[DEBUG] Detected interruption, breaking stream");
                         isProcessingInput = false; // Reset processing flag on interruption
@@ -164,6 +173,7 @@ async function main() {
                     process.stdout.write("\n");
                 }
                 activeTools.clear();
+                currentAbortController = null;
             }
         } catch (error) {
             console.error("[ERROR] Error in message processing:", error);
