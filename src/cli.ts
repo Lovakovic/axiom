@@ -12,7 +12,7 @@ interface ToolStreamState {
 
 async function main() {
     const threadId = Math.random().toString(36).substring(7);
-    let agent = await Agent.init(threadId);
+    let agent = await Agent.init();
     let ctrlCCount = 0;
     let ctrlCTimeout: NodeJS.Timeout | null = null;
     let isCurrentlyInterrupted = false;
@@ -23,10 +23,35 @@ async function main() {
     // Create a queue for buffering inputs during processing
     const inputQueue: string[] = [];
 
-    const rl = readline.createInterface({
+    // Initialize readline interface
+    let rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout
     });
+
+    function setupReadlineHandlers() {
+        rl.setPrompt('> ');
+        rl.on('line', (line) => {
+            console.log("[DEBUG] Line event received:", line);
+            console.log("[DEBUG] Current queue length:", inputQueue.length);
+            console.log("[DEBUG] Is processing:", isProcessingInput);
+            inputQueue.push(line);
+            setImmediate(processNextInput);
+        });
+    }
+
+    function resetReadline() {
+        rl.close();
+        rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+        setupReadlineHandlers();
+        rl.prompt();
+    }
+
+    // Set up initial readline handlers
+    setupReadlineHandlers();
 
     async function processNextInput() {
         if (inputQueue.length === 0 || isProcessingInput) {
@@ -57,27 +82,23 @@ async function main() {
             isCurrentlyInterrupted = true;
             wasInterrupted = true;
 
-            try {
-                await agent.interrupt();
-                console.log('Successfully interrupted agent');
-            } catch (error) {
-                console.error('[ERROR] Failed to interrupt agent:', error);
-            }
-
             if (ctrlCTimeout) {
                 clearTimeout(ctrlCTimeout);
             }
             ctrlCTimeout = setTimeout(() => {
                 ctrlCCount = 0;
+                isCurrentlyInterrupted = false;
+                console.log("[DEBUG] Reset interrupt state");
             }, 1000);
+
+            // Clear the input queue and reset processing state
+            inputQueue.length = 0;
+            isProcessingInput = false;
+            resetReadline(); // Reset the readline interface
         } else if (ctrlCCount === 3) {
             console.log('\nForce exiting...');
             process.exit(0);
         }
-
-        // Clear the input queue on interruption
-        inputQueue.length = 0;
-        rl.prompt();
     });
 
     async function handleLine(line: string) {
@@ -89,12 +110,10 @@ async function main() {
         }
 
         try {
-            if (wasInterrupted || isCurrentlyInterrupted) {
+            if (wasInterrupted) {
                 console.log("[DEBUG] Creating new agent after interruption");
-                const newAgent = await Agent.init(threadId);
-                agent = newAgent;
+                agent = await Agent.init();
                 wasInterrupted = false;
-                isCurrentlyInterrupted = false;
             }
 
             process.stdout.write("\nAgent: ");
@@ -105,14 +124,12 @@ async function main() {
             console.log("[DEBUG] Starting stream response");
 
             try {
-                for await (const event of agent.streamResponse(line, {
-                    signal: controller.signal
-                })) {
-                    // if (isCurrentlyInterrupted) {
-                    //     console.log("[DEBUG] Detected interruption, aborting stream");
-                    //     controller.abort();
-                    //     break;
-                    // }
+                for await (const event of agent.streamResponse(line, threadId)) {
+                    if (isCurrentlyInterrupted) {
+                        console.log("[DEBUG] Detected interruption, breaking stream");
+                        isProcessingInput = false; // Reset processing flag on interruption
+                        break;
+                    }
 
                     switch (event.type) {
                         case "text":
@@ -151,20 +168,28 @@ async function main() {
         } catch (error) {
             console.error("[ERROR] Error in message processing:", error);
         } finally {
-            rl.prompt();
+            if (!isCurrentlyInterrupted) {
+                rl.prompt();
+            }
         }
     }
 
-    // Handle line input by queueing
-    rl.on('line', (line) => {
-        console.log("[DEBUG] Line event received:", line);
-        inputQueue.push(line);
-        setImmediate(processNextInput);
-    });
-
     console.log("Agent ready! Type your messages (Ctrl+C to cancel, press 3 times to exit)");
-    rl.setPrompt('> ');
     rl.prompt();
 }
 
-main().catch(console.error);
+// Handle unexpected errors
+process.on('uncaughtException', (error) => {
+    console.error('[ERROR] Uncaught exception:', error);
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (error) => {
+    console.error('[ERROR] Unhandled rejection:', error);
+    process.exit(1);
+});
+
+main().catch((error) => {
+    console.error('[ERROR] Main process error:', error);
+    process.exit(1);
+});
