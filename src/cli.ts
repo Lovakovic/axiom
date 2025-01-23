@@ -1,4 +1,3 @@
-// src/cli.ts
 import { Agent } from "./agent/llm.js";
 import readline from 'readline';
 
@@ -11,11 +10,6 @@ interface ToolStreamState {
     accumulatedInput: string;
 }
 
-/**
- * Each item in our conversation buffer explicitly tracks its role
- * and the text content. This helps us reconstruct the conversation
- * properly in `streamResponse`.
- */
 interface ConversationMessage {
     role: 'human' | 'ai';
     text: string;
@@ -41,10 +35,6 @@ export class CLI {
      */
     private conversationBuffer: ConversationMessage[] = [];
 
-    // This was your old textBuffer for debugging or partial outputs,
-    // but we'll keep it minimal now.
-    private debugTextBuffer = '';
-
     private rl: readline.Interface;
 
     constructor() {
@@ -58,30 +48,21 @@ export class CLI {
         this.handleSignals();
     }
 
-    /**
-     * Initialize the agent
-     */
     public async init() {
         this.agent = await Agent.init();
     }
 
-    /**
-     * Start the CLI prompt
-     */
     public async start() {
-        console.log("Agent ready! Type your messages (Ctrl+C once to interrupt, 3 times to exit)");
+        console.log("Agent ready! Press Ctrl+C once to interrupt, twice to do nothing, three times to exit.");
         this.rl.prompt();
     }
 
-    /**
-     * Setup Ctrl+C signals
-     */
     private handleSignals() {
         process.on('SIGINT', async () => {
             this.ctrlCCount++;
 
+            // First Ctrl+C → interrupt the stream
             if (this.ctrlCCount === 1) {
-                // First time we see Ctrl+C
                 this.isCurrentlyInterrupted = true;
                 this.wasInterrupted = true;
 
@@ -89,27 +70,27 @@ export class CLI {
                     clearTimeout(this.ctrlCTimeout);
                 }
 
-                // Abort any ongoing LLM streaming
                 if (this.currentAbortController) {
                     this.currentAbortController.abort();
                     this.currentAbortController = null;
                 }
 
-                // Reset ctrlCCount after 1 second if no new interrupts
                 this.ctrlCTimeout = setTimeout(() => {
                     this.ctrlCCount = 0;
                     this.isCurrentlyInterrupted = false;
                 }, 1000);
 
-                // Clear queued lines & reset
                 this.inputQueue.length = 0;
                 this.isProcessingInput = false;
 
-                // Force a fresh prompt
                 this.resetReadline();
 
+                // Second Ctrl+C → do nothing
+            } else if (this.ctrlCCount === 2) {
+                // The user can still press a third time to exit.
+
+                // Third Ctrl+C → hard exit
             } else if (this.ctrlCCount === 3) {
-                // Hard exit
                 console.log('\nExiting...');
                 process.exit(0);
             }
@@ -119,7 +100,6 @@ export class CLI {
     private setupReadlineHandlers() {
         this.rl.setPrompt('> ');
         this.rl.on('line', (line) => {
-
             this.inputQueue.push(line);
             setImmediate(() => this.processNextInput());
         });
@@ -153,9 +133,6 @@ export class CLI {
         }
     }
 
-    /**
-     * Called for every line the user enters.
-     */
     private async handleLine(line: string) {
         if (!line.trim()) {
             this.rl.prompt();
@@ -163,6 +140,7 @@ export class CLI {
         }
 
         if (!this.agent) {
+            console.error("[ERROR] Agent not initialized");
             this.rl.prompt();
             return;
         }
@@ -174,7 +152,7 @@ export class CLI {
                 this.agent = await Agent.init();
             }
 
-            // 1) Add the new user message to conversationBuffer
+            // Add the new user message to conversationBuffer
             this.conversationBuffer.push({
                 role: 'human',
                 text: line
@@ -182,42 +160,33 @@ export class CLI {
 
             process.stdout.write("\nAgent: ");
 
-            // 2) Prepare streaming
             this.currentAbortController = new AbortController();
 
-            // 3) Call our updated streamResponse
+            // Stream agent's response
             for await (const event of this.agent.streamResponse(line, this.threadId, {
                 signal: this.currentAbortController.signal,
-                previousBuffer: this.conversationBuffer // pass entire buffer
+                previousBuffer: this.conversationBuffer
             })) {
-                // Break early if the user interrupted
                 if (this.isCurrentlyInterrupted) {
                     this.isProcessingInput = false;
                     break;
                 }
 
                 switch (event.type) {
-                    case "text":
-                        // This is partial AI text streaming in
+                    case "text": {
                         process.stdout.write(YELLOW + event.content + RESET);
 
-                        // If this is the first AI chunk for this user line, we may need
-                        // to push a new AI item to the buffer. We can do so if the last
-                        // message is *not* AI. If it is AI, just append to it.
-                        const lastMessage =
-                            this.conversationBuffer[this.conversationBuffer.length - 1];
-                        if (!lastMessage || lastMessage.role !== 'ai') {
+                        // If this is the first chunk of AI text for this user line,
+                        // push a new AI message. Otherwise append to the last message.
+                        const lastMsg = this.conversationBuffer[this.conversationBuffer.length - 1];
+                        if (!lastMsg || lastMsg.role !== 'ai') {
                             this.conversationBuffer.push({ role: 'ai', text: event.content || '' });
                         } else {
-                            lastMessage.text += event.content || '';
+                            lastMsg.text += event.content || '';
                         }
-
-                        // For debugging, also store partial text
-                        this.debugTextBuffer += event.content || '';
                         break;
-
+                    }
                     case "tool_start": {
-                        // Optionally handle a tool invocation start
                         const toolState: ToolStreamState = {
                             name: event.tool?.name || "unknown-tool",
                             accumulatedInput: ""
@@ -225,9 +194,7 @@ export class CLI {
                         process.stdout.write("\n" + BLUE + toolState.name + ": " + RESET);
                         break;
                     }
-
                     case "tool_input": {
-                        // Partial input for the tool
                         process.stdout.write(BLUE + (event.content || "") + RESET);
                         break;
                     }
@@ -241,14 +208,15 @@ export class CLI {
         } finally {
             this.currentAbortController = null;
 
+            // IMPORTANT: output a newline so that the next prompt
+            // doesn't overwrite the last line of AI text
+            process.stdout.write("\n");
+
             if (!this.isCurrentlyInterrupted) {
                 // If we completed without interruption,
                 // we can consider the conversation "finished" for now.
-                // If you want multi-turn conversation *including history*,
-                // you might NOT want to clear here. But if the user wants
-                // each question to start fresh once complete, then:
+                // If you do want multi-turn memory, skip clearing here.
                 this.conversationBuffer = [];
-                this.debugTextBuffer = '';
                 this.wasInterrupted = false;
             }
 

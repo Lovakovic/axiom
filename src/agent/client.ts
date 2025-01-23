@@ -33,7 +33,6 @@ export class MCPClient {
   async connect(command: string, args: string[] = []) {
     const transport = new StdioClientTransport({ command, args });
     await this.client.connect(transport);
-    console.log("Connected to MCP server");
   }
 
   async getTools(): Promise<Tool[]> {
@@ -72,11 +71,6 @@ export class MCPClient {
 
   async readResource(uri: string): Promise<ReadResourceResult> {
     return await this.client.readResource({ uri });
-  }
-
-  // Helper method to determine if a resource is an image
-  isImageResource(resource: Resource): boolean {
-    return resource.mimeType?.startsWith('image/') ?? false;
   }
 
   // Helper method to get base64 data from a resource
