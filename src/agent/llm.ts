@@ -1,12 +1,12 @@
-import { AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { SystemMessagePromptTemplate } from "@langchain/core/prompts";
-import { ChatAnthropic } from "@langchain/anthropic";
-import { Annotation, interrupt, MemorySaver, messagesStateReducer, StateGraph } from "@langchain/langgraph";
-import { DynamicStructuredTool } from "@langchain/core/tools";
-import { convertJSONSchemaDraft7ToZod } from "../shared/util/draftToZod";
-import { MCPClient } from "./client";
-import { ToolNode } from "./util/tool-node";
-import { createViewImageTool } from "./local_tools/image_tool";
+import {AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage} from "@langchain/core/messages";
+import {SystemMessagePromptTemplate} from "@langchain/core/prompts";
+import {ChatAnthropic} from "@langchain/anthropic";
+import {Annotation, MemorySaver, messagesStateReducer, StateGraph} from "@langchain/langgraph";
+import {DynamicStructuredTool} from "@langchain/core/tools";
+import {convertJSONSchemaDraft7ToZod} from "../shared/util/draftToZod";
+import {MCPClient} from "./client";
+import {ToolNode} from "./util/tool-node";
+import {createViewImageTool} from "./local_tools/image_tool";
 import os from 'os';
 import dotenv from "dotenv";
 
@@ -37,13 +37,9 @@ export type StreamEvent = {
     toolId: string;
 };
 
-
 export class Agent {
     private readonly app: any;
     private readonly mcpClient: MCPClient;
-
-    private isGenerating: boolean = false;
-    private currentController: AbortController | null = null;
 
     private constructor(mcpClient: MCPClient, app: any) {
         this.mcpClient = mcpClient;
@@ -114,11 +110,11 @@ export class Agent {
 
         // Create and compile the graph
         const workflow = new StateGraph(StateAnnotation)
-            .addNode("agent", callModel)
-            .addNode("tools", toolNode.invoke)
-            .addEdge("__start__", "agent")
-            .addConditionalEdges("agent", shouldContinue)
-            .addEdge("tools", "agent");
+          .addNode("agent", callModel)
+          .addNode("tools", toolNode.invoke)
+          .addEdge("__start__", "agent")
+          .addConditionalEdges("agent", shouldContinue)
+          .addEdge("tools", "agent");
 
         // Initialize memory
         const checkpointer = new MemorySaver();
@@ -141,7 +137,7 @@ export class Agent {
 
             // Create a template that combines base message and server instructions
             const baseSystemMessage = SystemMessagePromptTemplate.fromTemplate(
-                "You are a helpful AI assistant. You're brief, concise and up to the point, unless asked otherwise.\n\n{serverInstructions}"
+              "You are a helpful AI assistant. You're brief, concise and up to the point, unless asked otherwise.\n\n{serverInstructions}"
             );
 
             // Format the template with the server's instructions
@@ -152,119 +148,70 @@ export class Agent {
             console.error("Failed to get system prompt:", error);
             // Fallback to basic system message if server prompt fails
             return new SystemMessage(
-                "You are a helpful AI assistant. You're brief, concise and up to the point, unless asked otherwise."
+              "You are a helpful AI assistant. You're brief, concise and up to the point, unless asked otherwise."
             );
         }
     }
 
+
+
     async *streamResponse(input: string, threadId = "default"): AsyncGenerator<StreamEvent> {
-        if (this.isGenerating) {
-            throw new Error("Generation already in progress");
-        }
+        let currentToolId: string | null = null;
 
-        this.isGenerating = true;
-        this.currentController = new AbortController();
+        for await (const event of this.app.streamEvents(
+          { messages: [new HumanMessage(input)] },
+          {
+              configurable: { thread_id: threadId },
+              version: "v2",
+              recursionLimit: 75,
+          }
+        )) {
+            if (event.event !== "on_chat_model_stream") {
+                continue;
+            }
+            const chunk = event.data.chunk as AIMessageChunk;
 
-        try {
-            // Create a cleanup function for the last AIMessage if generation is interrupted
-            let lastAIMessage: AIMessage | null = null;
-
-            const cleanup = () => {
-                if (lastAIMessage) {
-                    // Remove any pending tool calls from the last message
-                    lastAIMessage.tool_calls = [];
-
-                    if(typeof lastAIMessage.content === 'string') {
-                        return;
-                    }
-                    lastAIMessage.content = lastAIMessage.content.filter(
-                      content => content.type === 'text'
-                    );
+            for (const contentItem of chunk.content) {
+                if (typeof contentItem === 'string') {
+                    yield { type: "text", content: contentItem };
                 }
-            };
-
-            for await (const event of this.app.streamEvents(
-              { messages: [new HumanMessage(input)] },
-              {
-                  configurable: { thread_id: threadId },
-                  version: "v2",
-                  recursionLimit: 75,
-                  signal: this.currentController.signal,
-              }
-            )) {
-                // Check if generation was cancelled
-                if (this.currentController.signal.aborted) {
-                    cleanup();
-                    return;
-                }
-
-                if (event.event !== "on_chat_model_stream") {
-                    continue;
-                }
-
-                const chunk = event.data.chunk as AIMessageChunk;
-                lastAIMessage = chunk;
-
-                for (const contentItem of chunk.content) {
-                    // Check for cancellation before processing each content item
-                    if (this.currentController.signal.aborted) {
-                        cleanup();
-                        return;
+                else if (contentItem.type === "text_delta") {
+                    if (contentItem.text) {
+                        yield { type: "text", content: contentItem.text };
                     }
+                }
+                else if (contentItem.type === "tool_use") {
+                    // Store the current tool ID
+                    currentToolId = contentItem.id;
 
-                    if (typeof contentItem === 'string') {
-                        yield { type: "text", content: contentItem };
-                    }
-                    else if (contentItem.type === 'text_delta') {
-                        if (contentItem.text) {
-                            yield { type: "text", content: contentItem.text };
+                    // Emit a tool start event
+                    yield {
+                        type: "tool_start",
+                        tool: {
+                            name: contentItem.name,
+                            id: contentItem.id
                         }
-                    }
-                    else if (contentItem.type === 'tool_use') {
-                        yield {
-                            type: "tool_start",
-                            tool: {
-                                name: contentItem.name,
-                                id: contentItem.id
-                            }
-                        };
+                    };
 
-                        if (contentItem.input) {
-                            yield {
-                                type: "tool_input",
-                                content: contentItem.input,
-                                toolId: contentItem.id
-                            };
-                        }
-                    }
-                    else if (contentItem.type === 'input_json_delta' && contentItem.input) {
+                    // Then emit the tool input if it exists
+                    if (contentItem.input) {
                         yield {
                             type: "tool_input",
                             content: contentItem.input,
-                            toolId: chunk.tool_calls?.[0]?.id ?? ''
+                            toolId: contentItem.id
+                        };
+                    }
+                }
+                else if (contentItem.type === "input_json_delta") {
+                    if (contentItem.input && currentToolId) {
+                        yield {
+                            type: "tool_input",
+                            content: contentItem.input,
+                            toolId: currentToolId
                         };
                     }
                 }
             }
-
-        } catch (error) {
-            if (error instanceof Error && error.name === 'AbortError') {
-                // Handle aborted generation
-                return interrupt("Generation cancelled. Please provide new input:");
-            }
-            throw error;
-        } finally {
-            this.isGenerating = false;
-            this.currentController = null;
         }
-    }
-
-    // Add method to cancel current generation
-    cancelGeneration() {
-        if (this.isGenerating && this.currentController) {
-            this.currentController.abort();
-            return true;
-        }
-        return false;
     }
 }

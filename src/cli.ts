@@ -28,9 +28,9 @@ async function main() {
 
         if (ctrlCCount === 1) {
             // First Ctrl+C: Try to cancel current generation
-            if (agent.cancelGeneration()) {
-                console.log('\nCancelling current generation...');
-            }
+            // if (agent.cancelGeneration()) {
+            //     console.log('\nCancelling current generation...');
+            // }
 
             // Reset counter after 1 second
             if (ctrlCTimeout) {
