@@ -14,48 +14,70 @@ interface ToolStreamState {
 
 async function main() {
     const agent = await Agent.init();
+    let ctrlCCount = 0;
+    let ctrlCTimeout: NodeJS.Timeout | null = null;
 
     const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout
     });
 
+    // Handle Ctrl+C
+    process.on('SIGINT', () => {
+        ctrlCCount++;
+
+        if (ctrlCCount === 1) {
+            // First Ctrl+C: Try to cancel current generation
+            if (agent.cancelGeneration()) {
+                console.log('\nCancelling current generation...');
+            }
+
+            // Reset counter after 1 second
+            if (ctrlCTimeout) {
+                clearTimeout(ctrlCTimeout);
+            }
+            ctrlCTimeout = setTimeout(() => {
+                ctrlCCount = 0;
+            }, 1000);
+        } else if (ctrlCCount === 3) {
+            // Third Ctrl+C: Exit the program
+            console.log('\nExiting...');
+            process.exit(0);
+        }
+
+        // Re-display prompt after Ctrl+C
+        process.stdout.write('\n');
+        rl.prompt();
+    });
+
     const threadId = Math.random().toString(36).substring(7);
-    console.log("Agent ready! Type your messages (ctrl+c to exit)");
+    console.log("Agent ready! Type your messages (Ctrl+C to cancel, press 3 times to exit)");
 
     rl.setPrompt('> ');
     rl.prompt();
 
     rl.on("line", async (line) => {
         try {
-            // Start a new line for the agent's response
             process.stdout.write("\nAgent: ");
-
-            // Track active tools by their ID
             const activeTools = new Map<string, ToolStreamState>();
 
-            // Stream and format the response
             for await (const event of agent.streamResponse(line, threadId)) {
                 switch (event.type) {
                     case "text":
-                        // Normal LLM partial text in yellow
                         process.stdout.write(YELLOW + event.content + RESET);
                         break;
 
                     case "tool_start":
-                        // Start tracking a new tool
                         activeTools.set(event.tool.id, {
                             name: event.tool.name,
                             accumulatedInput: ''
                         });
-                        // Start a new line for the tool
                         process.stdout.write("\n" + BLUE + event.tool.name + ": " + RESET);
                         break;
 
                     case "tool_input":
                         const tool = activeTools.get(event.toolId);
                         if (tool) {
-                            // Instead of replacing the entire line, just append the new content
                             process.stdout.write(BLUE + event.content + RESET);
                             tool.accumulatedInput += event.content;
                         }
@@ -63,22 +85,16 @@ async function main() {
                 }
             }
 
-            // Add a blank line after the response is fully done
             if (activeTools.size > 0) {
                 process.stdout.write("\n");
             }
-
-            // Clear active tools for next interaction
             activeTools.clear();
         } catch (error) {
-            console.error("Error:", error);
+            console.error("\nError:", error);
         }
         rl.prompt();
     });
 
-    rl.on('close', () => {
-        process.exit(0);
-    });
 }
 
 main().catch(console.error);
