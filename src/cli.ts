@@ -28,13 +28,7 @@ export class CLI {
     private inputQueue: string[] = [];
     private currentAbortController: AbortController | null = null;
 
-    /**
-     * We keep a buffer of conversation messages (both from user and partial AI).
-     * If the user interrupts, we do NOT clear this until we get a successful,
-     * uninterrupted completion.
-     */
     private conversationBuffer: ConversationMessage[] = [];
-
     private rl: readline.Interface;
 
     constructor() {
@@ -61,7 +55,6 @@ export class CLI {
         process.on('SIGINT', async () => {
             this.ctrlCCount++;
 
-            // First Ctrl+C → interrupt the stream
             if (this.ctrlCCount === 1) {
                 this.isCurrentlyInterrupted = true;
                 this.wasInterrupted = true;
@@ -83,13 +76,12 @@ export class CLI {
                 this.inputQueue.length = 0;
                 this.isProcessingInput = false;
 
+                // Output a newline on interruption to ensure the partial response is preserved
+                process.stdout.write("\n");
+
                 this.resetReadline();
-
-                // Second Ctrl+C → do nothing
             } else if (this.ctrlCCount === 2) {
-                // The user can still press a third time to exit.
-
-                // Third Ctrl+C → hard exit
+                // Second Ctrl+C does nothing
             } else if (this.ctrlCCount === 3) {
                 console.log('\nExiting...');
                 process.exit(0);
@@ -146,13 +138,10 @@ export class CLI {
         }
 
         try {
-            // If we had an interruption previously, re-init the agent
-            // but preserve the conversationBuffer for context.
             if (this.wasInterrupted) {
                 this.agent = await Agent.init();
             }
 
-            // Add the new user message to conversationBuffer
             this.conversationBuffer.push({
                 role: 'human',
                 text: line
@@ -162,13 +151,15 @@ export class CLI {
 
             this.currentAbortController = new AbortController();
 
-            // Stream agent's response
             for await (const event of this.agent.streamResponse(line, this.threadId, {
                 signal: this.currentAbortController.signal,
                 previousBuffer: this.conversationBuffer
             })) {
                 if (this.isCurrentlyInterrupted) {
                     this.isProcessingInput = false;
+
+                    // Output a newline when interrupted to preserve partial output
+                    process.stdout.write("\n");
                     break;
                 }
 
@@ -176,8 +167,6 @@ export class CLI {
                     case "text": {
                         process.stdout.write(YELLOW + event.content + RESET);
 
-                        // If this is the first chunk of AI text for this user line,
-                        // push a new AI message. Otherwise append to the last message.
                         const lastMsg = this.conversationBuffer[this.conversationBuffer.length - 1];
                         if (!lastMsg || lastMsg.role !== 'ai') {
                             this.conversationBuffer.push({ role: 'ai', text: event.content || '' });
@@ -200,7 +189,6 @@ export class CLI {
                     }
                 }
             }
-
         } catch (error) {
             if (!this.isCurrentlyInterrupted) {
                 console.error("[ERROR] Stream processing error:", error);
@@ -208,14 +196,11 @@ export class CLI {
         } finally {
             this.currentAbortController = null;
 
-            // IMPORTANT: output a newline so that the next prompt
-            // doesn't overwrite the last line of AI text
-            process.stdout.write("\n");
-
             if (!this.isCurrentlyInterrupted) {
-                // If we completed without interruption,
-                // we can consider the conversation "finished" for now.
-                // If you do want multi-turn memory, skip clearing here.
+                // Output a newline when the agent completes to ensure the prompt doesn't overwrite
+                process.stdout.write("\n");
+
+                // If we completed without interruption, clear the buffer
                 this.conversationBuffer = [];
                 this.wasInterrupted = false;
             }
