@@ -105,7 +105,13 @@ export class Agent {
         // Define model call function with system message
         const callModel = async (state: typeof StateAnnotation.State) => {
             const messages = state.messages;
-            console.log("Messages:", messages.map((m) => m.content));
+            const lastMessage = messages[messages.length - 1] as BaseMessage | undefined;
+
+            // Clear any pending tool calls if agent was stopped amidst tool invocation
+            if (lastMessage?.getType() === 'ai' && ((lastMessage as AIMessage)?.tool_calls?.length ?? 0) > 0) {
+                (lastMessage as AIMessage).tool_calls = [];
+            }
+
             const response = await model.invoke([systemMessage, ...messages]);
             return {messages: [response]};
         };
