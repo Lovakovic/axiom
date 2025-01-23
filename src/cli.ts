@@ -1,3 +1,4 @@
+// src/cli.ts
 import { Agent } from "./agent/llm.js";
 import readline from 'readline';
 
@@ -10,199 +11,273 @@ interface ToolStreamState {
     accumulatedInput: string;
 }
 
-async function main() {
-    const threadId = Math.random().toString(36).substring(7);
-    let agent = await Agent.init();
-    let ctrlCCount = 0;
-    let ctrlCTimeout: NodeJS.Timeout | null = null;
-    let isCurrentlyInterrupted = false;
-    let accumulatedOutput = '';
-    let wasInterrupted = false;
-    let isProcessingInput = false;
+/**
+ * Each item in our conversation buffer explicitly tracks its role
+ * and the text content. This helps us reconstruct the conversation
+ * properly in `streamResponse`.
+ */
+interface ConversationMessage {
+    role: 'human' | 'ai';
+    text: string;
+}
 
-    // Create a queue for buffering inputs during processing
-    const inputQueue: string[] = [];
-    let currentAbortController: AbortController | null = null;
+export class CLI {
+    private threadId: string;
+    private agent: Agent | null = null;
 
-    let textBuffer = '';  // Buffer for LLM text output
+    private ctrlCCount = 0;
+    private ctrlCTimeout: NodeJS.Timeout | null = null;
+    private isCurrentlyInterrupted = false;
+    private wasInterrupted = false;
+    private isProcessingInput = false;
 
-    // Initialize readline interface
-    let rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
+    private inputQueue: string[] = [];
+    private currentAbortController: AbortController | null = null;
 
-    function setupReadlineHandlers() {
-        rl.setPrompt('> ');
-        rl.on('line', (line) => {
-            console.log("[DEBUG] Line event received:", line);
-            console.log("[DEBUG] Current queue length:", inputQueue.length);
-            console.log("[DEBUG] Is processing:", isProcessingInput);
-            inputQueue.push(line);
-            setImmediate(processNextInput);
-        });
-    }
+    /**
+     * We keep a buffer of conversation messages (both from user and partial AI).
+     * If the user interrupts, we do NOT clear this until we get a successful,
+     * uninterrupted completion.
+     */
+    private conversationBuffer: ConversationMessage[] = [];
 
-    function resetReadline() {
-        rl.close();
-        rl = readline.createInterface({
+    // This was your old textBuffer for debugging or partial outputs,
+    // but we'll keep it minimal now.
+    private debugTextBuffer = '';
+
+    private rl: readline.Interface;
+
+    constructor() {
+        this.threadId = Math.random().toString(36).substring(7);
+        this.rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout
         });
-        setupReadlineHandlers();
-        rl.prompt();
+
+        this.setupReadlineHandlers();
+        this.handleSignals();
     }
 
-    // Set up initial readline handlers
-    setupReadlineHandlers();
+    /**
+     * Initialize the agent
+     */
+    public async init() {
+        this.agent = await Agent.init();
+    }
 
-    async function processNextInput() {
-        if (inputQueue.length === 0 || isProcessingInput) {
+    /**
+     * Start the CLI prompt
+     */
+    public async start() {
+        console.log("Agent ready! Type your messages (Ctrl+C once to interrupt, 3 times to exit)");
+        this.rl.prompt();
+    }
+
+    /**
+     * Setup Ctrl+C signals
+     */
+    private handleSignals() {
+        process.on('SIGINT', async () => {
+            this.ctrlCCount++;
+            console.log('\n[DEBUG] Received interrupt signal');
+            console.log('[DEBUG] Current ctrlCCount:', this.ctrlCCount);
+
+            if (this.ctrlCCount === 1) {
+                // First time we see Ctrl+C
+                this.isCurrentlyInterrupted = true;
+                this.wasInterrupted = true;
+
+                if (this.ctrlCTimeout) {
+                    clearTimeout(this.ctrlCTimeout);
+                }
+
+                // Abort any ongoing LLM streaming
+                if (this.currentAbortController) {
+                    console.log("[DEBUG] Aborting current stream");
+                    this.currentAbortController.abort();
+                    this.currentAbortController = null;
+                }
+
+                // Reset ctrlCCount after 1 second if no new interrupts
+                this.ctrlCTimeout = setTimeout(() => {
+                    this.ctrlCCount = 0;
+                    this.isCurrentlyInterrupted = false;
+                    console.log("[DEBUG] Reset interrupt state");
+                }, 1000);
+
+                // Clear queued lines & reset
+                this.inputQueue.length = 0;
+                this.isProcessingInput = false;
+
+                // Force a fresh prompt
+                this.resetReadline();
+
+            } else if (this.ctrlCCount === 3) {
+                // Hard exit
+                console.log('\nForce exiting...');
+                process.exit(0);
+            }
+        });
+    }
+
+    private setupReadlineHandlers() {
+        this.rl.setPrompt('> ');
+        this.rl.on('line', (line) => {
+            console.log("[DEBUG] Line event received:", line);
+            console.log("[DEBUG] Current queue length:", this.inputQueue.length);
+            console.log("[DEBUG] Is processing:", this.isProcessingInput);
+
+            this.inputQueue.push(line);
+            setImmediate(() => this.processNextInput());
+        });
+    }
+
+    private resetReadline() {
+        this.rl.close();
+        this.rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+        this.setupReadlineHandlers();
+        this.rl.prompt();
+    }
+
+    private async processNextInput() {
+        if (this.inputQueue.length === 0 || this.isProcessingInput) {
             return;
         }
 
-        isProcessingInput = true;
-        const line = inputQueue.shift()!;
+        this.isProcessingInput = true;
+        const line = this.inputQueue.shift()!;
 
         try {
-            await handleLine(line);
+            await this.handleLine(line);
         } finally {
-            isProcessingInput = false;
-            // Process next item in queue if any
-            if (inputQueue.length > 0) {
-                setImmediate(processNextInput);
+            this.isProcessingInput = false;
+            if (this.inputQueue.length > 0) {
+                setImmediate(() => this.processNextInput());
             }
         }
     }
 
-    // Handle Ctrl+C
-    process.on('SIGINT', async () => {
-        ctrlCCount++;
-        console.log('\n[DEBUG] Received interrupt signal');
-        console.log('[DEBUG] Current ctrlCCount:', ctrlCCount);
-
-        if (ctrlCCount === 1) {
-            isCurrentlyInterrupted = true;
-            wasInterrupted = true;
-
-            if (ctrlCTimeout) {
-                clearTimeout(ctrlCTimeout);
-            }
-
-            // Abort any ongoing stream
-            if (currentAbortController) {
-                console.log("[DEBUG] Aborting current stream");
-                currentAbortController.abort();
-                currentAbortController = null;
-            }
-
-            ctrlCTimeout = setTimeout(() => {
-                ctrlCCount = 0;
-                isCurrentlyInterrupted = false;
-                console.log("[DEBUG] Reset interrupt state");
-            }, 1000);
-
-            // Clear the input queue and reset processing state
-            inputQueue.length = 0;
-            isProcessingInput = false;
-            resetReadline(); // Reset the readline interface
-        } else if (ctrlCCount === 3) {
-            console.log('\nForce exiting...');
-            process.exit(0);
-        }
-    });
-
-    async function handleLine(line: string) {
+    /**
+     * Called for every line the user enters.
+     */
+    private async handleLine(line: string) {
         console.log("[DEBUG] Processing line:", line);
 
         if (!line.trim()) {
-            rl.prompt();
+            this.rl.prompt();
+            return;
+        }
+
+        if (!this.agent) {
+            console.error("[ERROR] Agent not initialized");
+            this.rl.prompt();
             return;
         }
 
         try {
-            if (wasInterrupted) {
+            // If we had an interruption previously, re-init the agent
+            // but preserve the conversationBuffer for context.
+            if (this.wasInterrupted) {
                 console.log("[DEBUG] Creating new agent after interruption");
-                console.log("[DEBUG] Using preserved buffer:", textBuffer.substring(0, 50) + "...");
-                agent = await Agent.init();
-                // Don't reset wasInterrupted here anymore
+                console.log("[DEBUG] (For debug) Old partial buffer snippet:",
+                    this.debugTextBuffer.substring(0, 50) + "..."
+                );
+                this.agent = await Agent.init();
             }
 
-            process.stdout.write("\nAgent: ");
-            const activeTools = new Map<string, ToolStreamState>();
-            accumulatedOutput = '';
+            // 1) Add the new user message to conversationBuffer
+            this.conversationBuffer.push({
+                role: 'human',
+                text: line
+            });
 
-            currentAbortController = new AbortController();
+            process.stdout.write("\nAgent: ");
+
+            // 2) Prepare streaming
+            this.currentAbortController = new AbortController();
             console.log("[DEBUG] Starting stream response");
 
-            try {
-                for await (const event of agent.streamResponse(line, threadId, {
-                    signal: currentAbortController?.signal,
-                    previousBuffer: wasInterrupted ? textBuffer : undefined
-                })) {
-                    if (isCurrentlyInterrupted) {
-                        console.log("[DEBUG] Detected interruption, breaking stream");
-                        isProcessingInput = false; // Reset processing flag on interruption
+            // 3) Call our updated streamResponse
+            for await (const event of this.agent.streamResponse(line, this.threadId, {
+                signal: this.currentAbortController.signal,
+                previousBuffer: this.conversationBuffer // pass entire buffer
+            })) {
+                // Break early if the user interrupted
+                if (this.isCurrentlyInterrupted) {
+                    console.log("[DEBUG] Detected interruption, breaking stream");
+                    this.isProcessingInput = false;
+                    break;
+                }
+
+                switch (event.type) {
+                    case "text":
+                        // This is partial AI text streaming in
+                        process.stdout.write(YELLOW + event.content + RESET);
+
+                        // If this is the first AI chunk for this user line, we may need
+                        // to push a new AI item to the buffer. We can do so if the last
+                        // message is *not* AI. If it is AI, just append to it.
+                        const lastMessage =
+                            this.conversationBuffer[this.conversationBuffer.length - 1];
+                        if (!lastMessage || lastMessage.role !== 'ai') {
+                            this.conversationBuffer.push({ role: 'ai', text: event.content || '' });
+                        } else {
+                            lastMessage.text += event.content || '';
+                        }
+
+                        // For debugging, also store partial text
+                        this.debugTextBuffer += event.content || '';
+                        break;
+
+                    case "tool_start": {
+                        // Optionally handle a tool invocation start
+                        const toolState: ToolStreamState = {
+                            name: event.tool?.name || "unknown-tool",
+                            accumulatedInput: ""
+                        };
+                        process.stdout.write("\n" + BLUE + toolState.name + ": " + RESET);
                         break;
                     }
 
-                    switch (event.type) {
-                        case "text":
-                            textBuffer += event.content;  // Add to buffer
-                            accumulatedOutput += event.content;
-                            process.stdout.write(YELLOW + event.content + RESET);
-                            break;
-
-                        case "tool_start":
-                            activeTools.set(event.tool.id, {
-                                name: event.tool.name,
-                                accumulatedInput: ''
-                            });
-                            process.stdout.write("\n" + BLUE + event.tool.name + ": " + RESET);
-                            break;
-
-                        case "tool_input":
-                            const tool = activeTools.get(event.toolId);
-                            if (tool) {
-                                process.stdout.write(BLUE + event.content + RESET);
-                                tool.accumulatedInput += event.content;
-                            }
-                            break;
+                    case "tool_input": {
+                        // Partial input for the tool
+                        process.stdout.write(BLUE + (event.content || "") + RESET);
+                        break;
                     }
                 }
-            } catch (error) {
-                if (!isCurrentlyInterrupted) {
-                    console.error("[ERROR] Stream processing error:", error);
-                }
-            } finally {
-                console.log("[DEBUG] Stream processing complete");
-                if (activeTools.size > 0) {
-                    process.stdout.write("\n");
-                }
-                activeTools.clear();
-                currentAbortController = null;
-
-                // Only clear buffer and wasInterrupted if we completed normally
-                if (!isCurrentlyInterrupted) {
-                    textBuffer = '';
-                    wasInterrupted = false;
-                    console.log("[DEBUG] Cleared buffer after successful completion");
-                }
             }
+
         } catch (error) {
-            console.error("[ERROR] Error in message processing:", error);
+            if (!this.isCurrentlyInterrupted) {
+                console.error("[ERROR] Stream processing error:", error);
+            }
         } finally {
-            if (!isCurrentlyInterrupted) {
-                rl.prompt();
+            console.log("[DEBUG] Stream processing complete");
+            this.currentAbortController = null;
+
+            if (!this.isCurrentlyInterrupted) {
+                // If we completed without interruption,
+                // we can consider the conversation "finished" for now.
+                // If you want multi-turn conversation *including history*,
+                // you might NOT want to clear here. But if the user wants
+                // each question to start fresh once complete, then:
+                this.conversationBuffer = [];
+                this.debugTextBuffer = '';
+                this.wasInterrupted = false;
+                console.log("[DEBUG] Cleared conversation buffer after successful completion");
+            }
+
+            if (!this.isCurrentlyInterrupted) {
+                this.rl.prompt();
             }
         }
     }
-
-    console.log("Agent ready! Type your messages (Ctrl+C to cancel, press 3 times to exit)");
-    rl.prompt();
 }
 
-// Handle unexpected errors
+// Top-level error handling
 process.on('uncaughtException', (error) => {
     console.error('[ERROR] Uncaught exception:', error);
     process.exit(1);
@@ -213,7 +288,16 @@ process.on('unhandledRejection', (error) => {
     process.exit(1);
 });
 
-main().catch((error) => {
-    console.error('[ERROR] Main process error:', error);
-    process.exit(1);
-});
+/**
+ * Main entry point
+ */
+(async () => {
+    try {
+        const cli = new CLI();
+        await cli.init();
+        await cli.start();
+    } catch (error) {
+        console.error('[ERROR] Main process error:', error);
+        process.exit(1);
+    }
+})();

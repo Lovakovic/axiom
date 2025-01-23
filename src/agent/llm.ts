@@ -155,24 +155,23 @@ export class Agent {
         }
     }
 
-    // Just adds messages to state,
-    async addMessages(messages: BaseMessage[]) {
-        await this.app.updateState({}, { messages }, 'callModel');
-    }
-
     async *streamResponse(
         input: string,
         threadId: string,
         options?: {
             signal?: AbortSignal;
-            previousBuffer?: string;
+            previousBuffer?: { role: 'human' | 'ai', text: string }[];
         }
     ): AsyncGenerator<StreamEvent> {
         let currentToolId: string | null = null;
 
         // Construct messages array based on whether we have a previous buffer
         const messages = options?.previousBuffer
-            ? [new AIMessage(options.previousBuffer), new HumanMessage(input)]
+            ? options.previousBuffer.map((message) => {
+                return message.role === 'ai'
+                    ? new AIMessage(message.text)
+                    : new HumanMessage(message.text);
+            })
             : [new HumanMessage(input)];
 
         for await (const event of this.app.streamEvents(
