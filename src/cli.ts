@@ -13,9 +13,14 @@ interface ToolStreamState {
 }
 
 async function main() {
-    const agent = await Agent.init();
+    const threadId = Math.random().toString(36).substring(7);
+    const agent = await Agent.init(threadId);
     let ctrlCCount = 0;
     let ctrlCTimeout: NodeJS.Timeout | null = null;
+    let isCurrentlyInterrupted = false;
+    let accumulatedOutput = '';
+
+    let wasInterrupted = false;
 
     const rl = readline.createInterface({
         input: process.stdin,
@@ -23,16 +28,15 @@ async function main() {
     });
 
     // Handle Ctrl+C
-    process.on('SIGINT', () => {
+    process.on('SIGINT', async () => {
         ctrlCCount++;
 
         if (ctrlCCount === 1) {
-            // First Ctrl+C: Try to cancel current generation
-            // if (agent.cancelGeneration()) {
-            //     console.log('\nCancelling current generation...');
-            // }
+            isCurrentlyInterrupted = true;
+            wasInterrupted = true;
+            await agent.interrupt();
+            console.log('\nCancelling current generation...');
 
-            // Reset counter after 1 second
             if (ctrlCTimeout) {
                 clearTimeout(ctrlCTimeout);
             }
@@ -40,17 +44,14 @@ async function main() {
                 ctrlCCount = 0;
             }, 1000);
         } else if (ctrlCCount === 3) {
-            // Third Ctrl+C: Exit the program
             console.log('\nExiting...');
             process.exit(0);
         }
 
-        // Re-display prompt after Ctrl+C
         process.stdout.write('\n');
         rl.prompt();
     });
 
-    const threadId = Math.random().toString(36).substring(7);
     console.log("Agent ready! Type your messages (Ctrl+C to cancel, press 3 times to exit)");
 
     rl.setPrompt('> ');
@@ -58,12 +59,31 @@ async function main() {
 
     rl.on("line", async (line) => {
         try {
+            console.log("\nProcessing new input, wasInterrupted:", wasInterrupted);
+
+            if (wasInterrupted) {
+                console.log("Attempting to reset agent state...");
+                await agent.resetState();
+                wasInterrupted = false;
+                console.log("Agent state reset complete");
+            }
+
+            isCurrentlyInterrupted = false;
             process.stdout.write("\nAgent: ");
             const activeTools = new Map<string, ToolStreamState>();
+            accumulatedOutput = '';
 
-            for await (const event of agent.streamResponse(line, threadId)) {
+            console.log("Starting stream response...");
+            for await (const event of agent.streamResponse(line)) {
+                // Break out if we've been interrupted
+                if (isCurrentlyInterrupted) {
+                    console.log("Stream interrupted, breaking...");
+                    break;
+                }
+
                 switch (event.type) {
                     case "text":
+                        accumulatedOutput += event.content;
                         process.stdout.write(YELLOW + event.content + RESET);
                         break;
 

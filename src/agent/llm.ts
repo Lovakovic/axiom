@@ -9,6 +9,7 @@ import {ToolNode} from "./util/tool-node";
 import {createViewImageTool} from "./local_tools/image_tool";
 import os from 'os';
 import dotenv from "dotenv";
+import { RunnableConfig } from "@langchain/core/runnables";
 
 // Load environment variables
 dotenv.config();
@@ -18,6 +19,10 @@ export const StateAnnotation = Annotation.Root({
     messages: Annotation<BaseMessage[]>({
         reducer: messagesStateReducer,
     }),
+    isInterrupted: Annotation<boolean>({
+        default: () => false,
+        reducer: (state, value) => value,
+    })
 });
 
 export interface ToolUseEvent {
@@ -38,15 +43,23 @@ export type StreamEvent = {
 };
 
 export class Agent {
+    private readonly threadConfig: RunnableConfig & { version: string };
+
     private readonly app: any;
     private readonly mcpClient: MCPClient;
 
-    private constructor(mcpClient: MCPClient, app: any) {
+    private constructor(mcpClient: MCPClient, app: any, threadId: string) {
         this.mcpClient = mcpClient;
         this.app = app;
+        // Store thread config at construction
+        this.threadConfig = {
+            configurable: { thread_id: threadId },
+            version: "v2",
+            recursionLimit: 75,
+        };
     }
 
-    static async init(): Promise<Agent> {
+    static async init(threadId: string): Promise<Agent> {
         if (!process.env.ANTHROPIC_API_KEY) {
             throw new Error("ANTHROPIC_API_KEY is not set in environment variables");
         }
@@ -92,10 +105,16 @@ export class Agent {
 
         // Define continue condition
         const shouldContinue = (state: typeof StateAnnotation.State) => {
-            const messages = state.messages;
-            const lastMessage = messages[messages.length - 1] as AIMessage;
+            // If interrupted, end the graph
+            if (state.isInterrupted) {
+                return "__end__";
+            }
 
-            if (lastMessage.tool_calls?.length) {
+            const messages = state.messages;
+            const lastMessage = messages[messages.length - 1];
+
+            // Only continue to tools if we have an AI message with tool calls
+            if (lastMessage?.getType() === "ai" && (lastMessage as AIMessage).tool_calls?.length) {
                 return "tools";
             }
             return "__end__";
@@ -103,6 +122,12 @@ export class Agent {
 
         // Define model call function with system message
         const callModel = async (state: typeof StateAnnotation.State) => {
+            console.log('Calling model, interrupted:', state.isInterrupted)
+            // If we're interrupted, don't add any new messages
+            if (state.isInterrupted || state.messages.length === 0) {
+                return {};
+            }
+
             const messages = state.messages;
             const response = await model.invoke([systemMessage, ...messages]);
             return {messages: [response]};
@@ -122,7 +147,7 @@ export class Agent {
         // Compile the graph
         const app = workflow.compile({checkpointer});
 
-        return new Agent(mcpClient, app);
+        return new Agent(mcpClient, app, threadId);
     }
 
     private static async getSystemMessage(mcpClient: MCPClient): Promise<SystemMessage> {
@@ -153,18 +178,32 @@ export class Agent {
         }
     }
 
+    async interrupt() {
+        // Pass the thread config when interrupting
+        await this.app.invoke({ isInterrupted: true }, this.threadConfig);
+    }
+
+    async resetState() {
+        // Reset the entire state
+        await this.app.invoke(
+          {
+              messages: [],
+              isInterrupted: false
+          },
+          this.threadConfig
+        );
+    }
 
 
-    async *streamResponse(input: string, threadId = "default"): AsyncGenerator<StreamEvent> {
+    async *streamResponse(input: string): AsyncGenerator<StreamEvent> {
         let currentToolId: string | null = null;
 
         for await (const event of this.app.streamEvents(
-          { messages: [new HumanMessage(input)] },
           {
-              configurable: { thread_id: threadId },
-              version: "v2",
-              recursionLimit: 75,
-          }
+              messages: [new HumanMessage(input)],
+              isInterrupted: false
+          },
+          this.threadConfig
         )) {
             if (event.event !== "on_chat_model_stream") {
                 continue;
