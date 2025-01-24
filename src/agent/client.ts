@@ -12,6 +12,7 @@ import { ReadResourceResult } from "@modelcontextprotocol/sdk/types";
 
 export class MCPClient {
   private readonly client: Client;
+  private transport: StdioClientTransport | null = null;
 
   constructor() {
     this.client = new Client(
@@ -29,11 +30,20 @@ export class MCPClient {
     );
   }
 
-
   async connect(command: string, args: string[] = []) {
-    const transport = new StdioClientTransport({ command, args });
-    await this.client.connect(transport);
-    console.log("Connected to MCP server");
+    this.transport = new StdioClientTransport({ command, args });
+    await this.client.connect(this.transport);
+  }
+
+  async disconnect() {
+    if (this.transport) {
+      try {
+        await this.client.close();
+      } catch (error) {
+        console.error('Error closing client:', error);
+      }
+      this.transport = null;
+    }
   }
 
   async getTools(): Promise<Tool[]> {
@@ -72,11 +82,6 @@ export class MCPClient {
 
   async readResource(uri: string): Promise<ReadResourceResult> {
     return await this.client.readResource({ uri });
-  }
-
-  // Helper method to determine if a resource is an image
-  isImageResource(resource: Resource): boolean {
-    return resource.mimeType?.startsWith('image/') ?? false;
   }
 
   // Helper method to get base64 data from a resource

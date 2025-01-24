@@ -47,13 +47,10 @@ export class Agent {
         this.app = app;
     }
 
-    static async init(): Promise<Agent> {
+    static async init(mcpClient: MCPClient): Promise<Agent> {
         if (!process.env.ANTHROPIC_API_KEY) {
             throw new Error("ANTHROPIC_API_KEY is not set in environment variables");
         }
-
-        const mcpClient = new MCPClient();
-        await mcpClient.connect("node", ["dist/server/index.js"]);
 
         // Get MCP tools
         const tools = await mcpClient.getTools();
@@ -64,8 +61,16 @@ export class Agent {
                 name: mcpTool.name,
                 description: mcpTool.description ?? "",
                 func: async (args: Record<string, unknown>) => {
-                    const result = await mcpClient.executeTool(mcpTool.name, args);
-                    return result.content[0].text;
+                    try {
+                        const result = await mcpClient.executeTool(mcpTool.name, args);
+                        return result.content[0].text;
+                    } catch (error) {
+                        // Handle MCP connection errors gracefully
+                        if (error instanceof Error && error.message?.includes('Connection closed')) {
+                            return "Tool execution was interrupted.";
+                        }
+                        throw error;
+                    }
                 },
                 schema: convertJSONSchemaDraft7ToZod(JSON.stringify(mcpTool.inputSchema)),
             });
@@ -105,7 +110,24 @@ export class Agent {
         // Define model call function with system message
         const callModel = async (state: typeof StateAnnotation.State) => {
             const messages = state.messages;
-            const response = await model.invoke([systemMessage, ...messages]);
+            const lastMessage = messages[messages.length - 1] as BaseMessage | undefined;
+
+            // Clear any pending tool calls if agent was stopped amidst tool invocation
+            if (lastMessage?.getType() === 'ai' && ((lastMessage as AIMessage)?.tool_calls?.length ?? 0) > 0) {
+                (lastMessage as AIMessage).tool_calls = [];
+            }
+
+            // Clear out any messages with empty content
+            const filteredMessages = messages.filter((message) => {
+                if(typeof message.content === 'string') {
+                    return message.content.trim() !== '';
+                }
+                else if (message.content.length > 0) {
+                    return true;
+                }
+            });
+
+            const response = await model.invoke([systemMessage, ...filteredMessages]);
             return {messages: [response]};
         };
 
@@ -154,17 +176,32 @@ export class Agent {
         }
     }
 
-
-
-    async *streamResponse(input: string, threadId = "default"): AsyncGenerator<StreamEvent> {
+    async *streamResponse(
+        input: string,
+        threadId: string,
+        options?: {
+            signal?: AbortSignal;
+            previousBuffer?: { role: 'human' | 'ai', text: string }[];
+        }
+    ): AsyncGenerator<StreamEvent> {
         let currentToolId: string | null = null;
 
+        // Construct messages array based on whether we have a previous buffer
+        const messages = options?.previousBuffer
+            ? options.previousBuffer.map((message) => {
+                return message.role === 'ai'
+                    ? new AIMessage(message.text)
+                    : new HumanMessage(message.text);
+            })
+            : [new HumanMessage(input)];
+
         for await (const event of this.app.streamEvents(
-            { messages: [new HumanMessage(input)] },
+            { messages },
             {
                 configurable: { thread_id: threadId },
                 version: "v2",
                 recursionLimit: 75,
+                signal: options?.signal
             }
         )) {
             if (event.event !== "on_chat_model_stream") {
