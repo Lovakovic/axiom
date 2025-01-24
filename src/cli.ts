@@ -25,6 +25,7 @@ export class CLI {
     private ctrlCCount = 0;
     private ctrlCTimeout: NodeJS.Timeout | null = null;
     private isCurrentlyInterrupted = false;
+    private wasInterrupted = false;
     private isProcessingInput = false;
 
     private readonly inputQueue: string[] = [];
@@ -40,10 +41,8 @@ export class CLI {
             output: process.stdout
         });
 
-        // Store original stderr.write with correct typing
         this.originalStderr = process.stderr.write.bind(process.stderr);
 
-        // This will filter out Langhcain's callback handler error messages on tool interruption
         process.stderr.write = ((
           buffer: string | Uint8Array,
           encoding?: BufferEncoding,
@@ -52,7 +51,7 @@ export class CLI {
             const text = buffer.toString();
             if (text.includes('Error in handler EventStreamCallbackHandler')) {
                 if (cb) cb();
-                return true; // Pretend we wrote it
+                return true;
             }
             return this.originalStderr(buffer, encoding, cb);
         }) as typeof process.stderr.write;
@@ -62,14 +61,10 @@ export class CLI {
     }
 
     public async init() {
-        // Create and store MCPClient instance
         this.mcpClient = new MCPClient();
         await this.mcpClient.connect("node", ["dist/server/index.js"]);
-
-        // Pass MCPClient instance to Agent
         this.agent = await Agent.init(this.mcpClient);
     }
-
 
     public async start() {
         console.log("Agent ready! Press Ctrl+C once to interrupt, twice to do nothing, three times to exit.");
@@ -82,6 +77,7 @@ export class CLI {
 
             if (this.ctrlCCount === 1) {
                 this.isCurrentlyInterrupted = true;
+                this.wasInterrupted = true;
 
                 if (this.ctrlCTimeout) {
                     clearTimeout(this.ctrlCTimeout);
@@ -100,40 +96,46 @@ export class CLI {
                 this.inputQueue.length = 0;
                 this.isProcessingInput = false;
 
-                // Output a newline on interruption to ensure the partial response is preserved
                 process.stdout.write("\n");
 
                 this.resetReadline();
-            } else if (this.ctrlCCount === 2) {
-                // Second Ctrl+C does nothing
-                this.ctrlCCount = 0;
+
             } else if (this.ctrlCCount === 3) {
                 console.log('\nExiting...');
-                // Clean up MCP client connection before exit
-                try {
-                    await this.cleanup();
-                } finally {
-                    process.exit(0);
-                }
+                await this.cleanup();
+                process.exit(0);
             }
         });
     }
 
     private setupReadlineHandlers() {
         this.rl.setPrompt('> ');
+
+        // Remove any existing line listeners
+        this.rl.removeAllListeners('line');
+
         this.rl.on('line', (line) => {
             this.inputQueue.push(line);
-            setImmediate(() => this.processNextInput());
+
+            // Ensure we're processing input
+            setImmediate(() => {
+                this.processNextInput();
+            });
         });
     }
 
     private resetReadline() {
-        this.rl.close();
+        // Create new interface with explicit terminal settings
         this.rl = readline.createInterface({
             input: process.stdin,
-            output: process.stdout
+            output: process.stdout,
+            prompt: '> ',
+            terminal: true
         });
+
+        // Set up new handlers
         this.setupReadlineHandlers();
+
         this.rl.prompt();
     }
 
@@ -161,13 +163,19 @@ export class CLI {
             return;
         }
 
-        if (!this.agent) {
-            console.error("[ERROR] Agent not initialized");
-            this.rl.prompt();
+        // Ensure readline is ready
+        if (!this.rl.terminal) {
+            this.resetReadline();
             return;
         }
 
         try {
+            if (this.wasInterrupted) {
+                this.mcpClient = new MCPClient();
+                await this.mcpClient.connect("node", ["dist/server/index.js"]);
+                this.agent = await Agent.init(this.mcpClient);
+            }
+
             this.conversationBuffer.push({
                 role: 'human',
                 text: line
@@ -183,6 +191,7 @@ export class CLI {
             })) {
                 if (this.isCurrentlyInterrupted) {
                     this.isProcessingInput = false;
+                    process.stdout.write("\n");
                     break;
                 }
 
@@ -199,11 +208,7 @@ export class CLI {
                         break;
                     }
                     case "tool_start": {
-                        const toolState: ToolStreamState = {
-                            name: event.tool?.name || "unknown-tool",
-                            accumulatedInput: ""
-                        };
-                        process.stdout.write("\n" + BLUE + toolState.name + ": " + RESET);
+                        process.stdout.write("\n" + BLUE + event.tool.name + ": " + RESET);
                         break;
                     }
                     case "tool_input": {
@@ -220,21 +225,25 @@ export class CLI {
             this.currentAbortController = null;
 
             if (!this.isCurrentlyInterrupted) {
-                // Output a newline when the agent completes to ensure the prompt doesn't overwrite
                 process.stdout.write("\n");
-
-                // If we completed without interruption, clear the buffer
                 this.conversationBuffer = [];
+                this.wasInterrupted = false;
+
+                // Force readline refresh
+                setImmediate(() => {
+                    this.rl.prompt(true);
+                });
             }
 
             if (!this.isCurrentlyInterrupted) {
-                this.rl.prompt();
+                // Ensure readline is responsive
+                process.stdin.resume();
+                this.rl.prompt(true);
             }
         }
     }
 
     private async cleanup() {
-        // Restore original stderr.write
         process.stderr.write = this.originalStderr;
 
         if (this.mcpClient) {
@@ -244,6 +253,8 @@ export class CLI {
                 console.error('Error during MCP client cleanup:', error);
             }
         }
+
+        this.rl.close();
     }
 }
 
@@ -258,9 +269,6 @@ process.on('unhandledRejection', (error) => {
     process.exit(1);
 });
 
-/**
- * Main entry point
- */
 (async () => {
     try {
         const cli = new CLI();
