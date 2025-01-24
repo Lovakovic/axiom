@@ -151,9 +151,6 @@ export class CLI {
             })) {
                 if (this.isCurrentlyInterrupted) {
                     this.isProcessingInput = false;
-
-                    // Output a newline when interrupted to preserve partial output
-                    process.stdout.write("\n");
                     break;
                 }
 
