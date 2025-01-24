@@ -20,6 +20,7 @@ export class CLI {
     private readonly threadId: string;
     private agent!: Agent;
     private mcpClient!: MCPClient;
+    private readonly originalStderr: NodeJS.WriteStream['write'];
 
     private ctrlCCount = 0;
     private ctrlCTimeout: NodeJS.Timeout | null = null;
@@ -38,6 +39,23 @@ export class CLI {
             input: process.stdin,
             output: process.stdout
         });
+
+        // Store original stderr.write with correct typing
+        this.originalStderr = process.stderr.write.bind(process.stderr);
+
+        // This will filter out Langhcain's callback handler error messages on tool interruption
+        process.stderr.write = ((
+          buffer: string | Uint8Array,
+          encoding?: BufferEncoding,
+          cb?: (err?: Error) => void
+        ): boolean => {
+            const text = buffer.toString();
+            if (text.includes('Error in handler EventStreamCallbackHandler')) {
+                if (cb) cb();
+                return true; // Pretend we wrote it
+            }
+            return this.originalStderr(buffer, encoding, cb);
+        }) as typeof process.stderr.write;
 
         this.setupReadlineHandlers();
         this.handleSignals();
@@ -216,9 +234,11 @@ export class CLI {
     }
 
     private async cleanup() {
+        // Restore original stderr.write
+        process.stderr.write = this.originalStderr;
+
         if (this.mcpClient) {
             try {
-                // Add proper cleanup method to MCPClient class
                 await this.mcpClient.disconnect();
             } catch (error) {
                 console.error('Error during MCP client cleanup:', error);
