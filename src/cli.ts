@@ -16,16 +16,15 @@ interface ConversationMessage {
 }
 
 export class CLI {
-    private threadId: string;
-    private agent: Agent | null = null;
+    private readonly threadId: string;
+    private agent!: Agent;
 
     private ctrlCCount = 0;
     private ctrlCTimeout: NodeJS.Timeout | null = null;
     private isCurrentlyInterrupted = false;
-    private wasInterrupted = false;
     private isProcessingInput = false;
 
-    private inputQueue: string[] = [];
+    private readonly inputQueue: string[] = [];
     private currentAbortController: AbortController | null = null;
 
     private conversationBuffer: ConversationMessage[] = [];
@@ -57,7 +56,6 @@ export class CLI {
 
             if (this.ctrlCCount === 1) {
                 this.isCurrentlyInterrupted = true;
-                this.wasInterrupted = true;
 
                 if (this.ctrlCTimeout) {
                     clearTimeout(this.ctrlCTimeout);
@@ -138,10 +136,6 @@ export class CLI {
         }
 
         try {
-            if (this.wasInterrupted) {
-                this.agent = await Agent.init();
-            }
-
             this.conversationBuffer.push({
                 role: 'human',
                 text: line
@@ -202,7 +196,6 @@ export class CLI {
 
                 // If we completed without interruption, clear the buffer
                 this.conversationBuffer = [];
-                this.wasInterrupted = false;
             }
 
             if (!this.isCurrentlyInterrupted) {
