@@ -1,5 +1,6 @@
 import { Agent } from "./agent/llm.js";
 import readline from 'readline';
+import { MCPClient } from "./agent/client";
 
 const YELLOW = '\x1b[33m';
 const BLUE = '\x1b[34m';
@@ -18,6 +19,7 @@ interface ConversationMessage {
 export class CLI {
     private readonly threadId: string;
     private agent!: Agent;
+    private mcpClient!: MCPClient;
 
     private ctrlCCount = 0;
     private ctrlCTimeout: NodeJS.Timeout | null = null;
@@ -42,8 +44,14 @@ export class CLI {
     }
 
     public async init() {
-        this.agent = await Agent.init();
+        // Create and store MCPClient instance
+        this.mcpClient = new MCPClient();
+        await this.mcpClient.connect("node", ["dist/server/index.js"]);
+
+        // Pass MCPClient instance to Agent
+        this.agent = await Agent.init(this.mcpClient);
     }
+
 
     public async start() {
         console.log("Agent ready! Press Ctrl+C once to interrupt, twice to do nothing, three times to exit.");
@@ -80,9 +88,15 @@ export class CLI {
                 this.resetReadline();
             } else if (this.ctrlCCount === 2) {
                 // Second Ctrl+C does nothing
+                this.ctrlCCount = 0;
             } else if (this.ctrlCCount === 3) {
                 console.log('\nExiting...');
-                process.exit(0);
+                // Clean up MCP client connection before exit
+                try {
+                    await this.cleanup();
+                } finally {
+                    process.exit(0);
+                }
             }
         });
     }
@@ -197,6 +211,17 @@ export class CLI {
 
             if (!this.isCurrentlyInterrupted) {
                 this.rl.prompt();
+            }
+        }
+    }
+
+    private async cleanup() {
+        if (this.mcpClient) {
+            try {
+                // Add proper cleanup method to MCPClient class
+                await this.mcpClient.disconnect();
+            } catch (error) {
+                console.error('Error during MCP client cleanup:', error);
             }
         }
     }

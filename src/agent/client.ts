@@ -12,6 +12,7 @@ import { ReadResourceResult } from "@modelcontextprotocol/sdk/types";
 
 export class MCPClient {
   private readonly client: Client;
+  private transport: StdioClientTransport | null = null;
 
   constructor() {
     this.client = new Client(
@@ -29,10 +30,20 @@ export class MCPClient {
     );
   }
 
-
   async connect(command: string, args: string[] = []) {
-    const transport = new StdioClientTransport({ command, args });
-    await this.client.connect(transport);
+    this.transport = new StdioClientTransport({ command, args });
+    await this.client.connect(this.transport);
+  }
+
+  async disconnect() {
+    if (this.transport) {
+      try {
+        await this.client.close();
+      } catch (error) {
+        console.error('Error closing client:', error);
+      }
+      this.transport = null;
+    }
   }
 
   async getTools(): Promise<Tool[]> {

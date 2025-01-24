@@ -47,13 +47,10 @@ export class Agent {
         this.app = app;
     }
 
-    static async init(): Promise<Agent> {
+    static async init(mcpClient: MCPClient): Promise<Agent> {
         if (!process.env.ANTHROPIC_API_KEY) {
             throw new Error("ANTHROPIC_API_KEY is not set in environment variables");
         }
-
-        const mcpClient = new MCPClient();
-        await mcpClient.connect("node", ["dist/server/index.js"]);
 
         // Get MCP tools
         const tools = await mcpClient.getTools();
@@ -64,8 +61,16 @@ export class Agent {
                 name: mcpTool.name,
                 description: mcpTool.description ?? "",
                 func: async (args: Record<string, unknown>) => {
-                    const result = await mcpClient.executeTool(mcpTool.name, args);
-                    return result.content[0].text;
+                    try {
+                        const result = await mcpClient.executeTool(mcpTool.name, args);
+                        return result.content[0].text;
+                    } catch (error) {
+                        // Handle MCP connection errors gracefully
+                        if (error instanceof Error && error.message?.includes('Connection closed')) {
+                            return "Tool execution was interrupted.";
+                        }
+                        throw error;
+                    }
                 },
                 schema: convertJSONSchemaDraft7ToZod(JSON.stringify(mcpTool.inputSchema)),
             });
@@ -112,7 +117,17 @@ export class Agent {
                 (lastMessage as AIMessage).tool_calls = [];
             }
 
-            const response = await model.invoke([systemMessage, ...messages]);
+            // Clear out any messages with empty content
+            const filteredMessages = messages.filter((message) => {
+                if(typeof message.content === 'string') {
+                    return message.content.trim() !== '';
+                }
+                else if (message.content.length > 0) {
+                    return true;
+                }
+            });
+
+            const response = await model.invoke([systemMessage, ...filteredMessages]);
             return {messages: [response]};
         };
 
