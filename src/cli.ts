@@ -150,23 +150,58 @@ export class CLI {
     this.rl.setPrompt('> ');
     this.rl.removeAllListeners('line');
 
-    this.rl.on('line', (line) => {
-      this.logger.debug('INPUT', 'New input received', {
+    this.rl.on('line', async (line) => {
+      await this.logger.debug('INPUT', 'New input received', {
         inputLength: line.length,
         queueLength: this.inputQueue.length,
-        isProcessingInput: this.isProcessingInput
+        isProcessingInput: this.isProcessingInput,
+        readlineState: {
+          terminal: this.rl.terminal,
+          prompt: this.rl.getPrompt(),
+          closed: (this.rl as any).closed
+        }
       });
 
       this.inputQueue.push(line);
-      setImmediate(() => {
-        this.processNextInput();
+      await this.logger.debug('QUEUE', 'Input queued', {
+        queueLength: this.inputQueue.length,
+        newInput: line
       });
+
+      setImmediate(() => {
+        this.processNextInput().catch(async (error) => {
+          await this.logger.error('PROCESS', 'Failed to process input', {
+            error: error instanceof Error ? error.stack : String(error),
+            inputLine: line
+          });
+        });
+      });
+    });
+
+    this.rl.on('close', async () => {
+      await this.logger.info('READLINE', 'Readline interface closed');
+    });
+
+    this.rl.on('pause', async () => {
+      await this.logger.debug('READLINE', 'Readline interface paused');
+    });
+
+    this.rl.on('resume', async () => {
+      await this.logger.debug('READLINE', 'Readline interface resumed');
     });
   }
 
-  private resetReadline() {
-    this.logger.debug('READLINE', 'Resetting readline interface');
 
+  private resetReadline() {
+    this.logger.debug('READLINE', 'Resetting readline interface', {
+      oldState: {
+        terminal: this.rl.terminal,
+        prompt: this.rl.getPrompt(),
+        closed: (this.rl as any).closed
+      }
+    });
+
+    this.rl.close();
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -175,6 +210,15 @@ export class CLI {
     });
 
     this.setupReadlineHandlers();
+
+    this.logger.debug('READLINE', 'Readline interface reset complete', {
+      newState: {
+        terminal: this.rl.terminal,
+        prompt: this.rl.getPrompt(),
+        closed: (this.rl as any).closed
+      }
+    });
+
     this.rl.prompt();
   }
 
@@ -207,12 +251,31 @@ export class CLI {
   }
 
   private async handleLine(line: string) {
+    await this.logger.debug('HANDLE', 'Starting line handling', {
+      lineLength: line.length,
+      readlineState: {
+        terminal: this.rl.terminal,
+        prompt: this.rl.getPrompt(),
+        closed: (this.rl as any).closed
+      },
+      bufferState: {
+        conversationLength: this.conversationBuffer.length,
+        lastMessageRole: this.conversationBuffer.length > 0
+          ? this.conversationBuffer[this.conversationBuffer.length - 1].role
+          : null
+      }
+    });
+
     if (!line.trim()) {
+      await this.logger.debug('HANDLE', 'Empty line received');
       this.rl.prompt();
       return;
     }
 
     if (!this.rl.terminal) {
+      await this.logger.warn('HANDLE', 'Non-terminal readline detected, resetting', {
+        currentTerminal: this.rl.terminal
+      });
       this.resetReadline();
       return;
     }
@@ -282,14 +345,17 @@ export class CLI {
         }
       }
     } catch (error) {
-      if (!this.isCurrentlyInterrupted) {
-        await this.logger.error('PROCESSING', 'Error in stream processing', {
-          error: error instanceof Error ? error.stack : String(error),
-          isCurrentlyInterrupted: this.isCurrentlyInterrupted,
-          wasInterrupted: this.wasInterrupted
-        });
-        console.error("[ERROR] Stream processing error:", error);
-      }
+      await this.logger.error('HANDLE', 'Error in line handling', {
+        error: error instanceof Error ? error.stack : String(error),
+        lineContent: line,
+        currentState: {
+          isInterrupted: this.isCurrentlyInterrupted,
+          wasInterrupted: this.wasInterrupted,
+          isProcessing: this.isProcessingInput,
+          queueLength: this.inputQueue.length
+        }
+      });
+      throw error;
     } finally {
       this.currentAbortController = null;
 
