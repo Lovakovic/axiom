@@ -10,29 +10,40 @@ export interface LogEntry {
   metadata?: Record<string, any>;
 }
 
+export type LogLevel = LogEntry['level'] | 'false';
+
 export class Logger {
   private static instance: Logger;
   private readonly logDir: string;
   private readonly currentLogFile: string;
   private readonly logBuffer: LogEntry[] = [];
   private readonly flushInterval: NodeJS.Timeout | null = null;
-  private readonly isLoggingEnabled: boolean;
+  private readonly logLevel: LogEntry['level'] | false;
   private isShuttingDown = false;
 
-  private shouldLog(): boolean {
-    return this.isLoggingEnabled;
+  private shouldLog(level: LogEntry['level']): boolean {
+    if (this.logLevel === false) return false;
+    
+    const levels: LogEntry['level'][] = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+    const currentLevelIndex = levels.indexOf(this.logLevel);
+    const messageLevelIndex = levels.indexOf(level);
+    
+    return messageLevelIndex >= currentLevelIndex;
   }
 
   private constructor() {
-    const debugEnv = process.env.DEBUG?.toLowerCase();
-    this.isLoggingEnabled = debugEnv !== 'false';
+    const debugEnv = process.env.DEBUG?.toUpperCase();
+    this.logLevel = (debugEnv === 'FALSE' ? false : 
+      (debugEnv === 'DEBUG' || debugEnv === 'INFO' || debugEnv === 'WARN' || debugEnv === 'ERROR') 
+        ? debugEnv as LogEntry['level'] 
+        : 'DEBUG');
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     this.logDir = path.join(os.homedir(), '.mcp', 'logs');
     this.currentLogFile = path.join(this.logDir, `mcp-${timestamp}.log`);
 
     // Only set up logging infrastructure if enabled
-    if (this.isLoggingEnabled) {
+    if (this.logLevel !== false) {
       // Create buffer flush interval
       this.flushInterval = setInterval(() => this.flushBuffer(), 5000);
 
@@ -103,7 +114,7 @@ export class Logger {
   }
 
   private async log(level: LogEntry['level'], category: string, message: string, metadata?: Record<string, any>) {
-    if (!this.shouldLog()) return;
+    if (!this.shouldLog(level)) return;
 
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
