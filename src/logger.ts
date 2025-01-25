@@ -15,19 +15,30 @@ export class Logger {
   private readonly logDir: string;
   private readonly currentLogFile: string;
   private readonly logBuffer: LogEntry[] = [];
-  private readonly flushInterval: NodeJS.Timeout;
+  private readonly flushInterval: NodeJS.Timeout | null = null;
+  private readonly isLoggingEnabled: boolean;
   private isShuttingDown = false;
 
+  private shouldLog(): boolean {
+    return this.isLoggingEnabled;
+  }
+
   private constructor() {
+    const debugEnv = process.env.DEBUG?.toLowerCase();
+    this.isLoggingEnabled = debugEnv !== 'false';
+
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     this.logDir = path.join(os.homedir(), '.mcp', 'logs');
     this.currentLogFile = path.join(this.logDir, `mcp-${timestamp}.log`);
 
-    // Create buffer flush interval
-    this.flushInterval = setInterval(() => this.flushBuffer(), 5000);
+    // Only set up logging infrastructure if enabled
+    if (this.isLoggingEnabled) {
+      // Create buffer flush interval
+      this.flushInterval = setInterval(() => this.flushBuffer(), 5000);
 
-    // Setup shutdown handlers
-    this.setupShutdownHandlers();
+      // Setup shutdown handlers
+      this.setupShutdownHandlers();
+    }
   }
 
   static async init(): Promise<Logger> {
@@ -58,7 +69,9 @@ export class Logger {
       if (this.isShuttingDown) return;
       this.isShuttingDown = true;
 
-      clearInterval(this.flushInterval);
+      if(this.flushInterval) {
+        clearInterval(this.flushInterval);
+      }
       await this.flushBuffer();
     };
 
@@ -90,6 +103,8 @@ export class Logger {
   }
 
   private async log(level: LogEntry['level'], category: string, message: string, metadata?: Record<string, any>) {
+    if (!this.shouldLog()) return;
+
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
