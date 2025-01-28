@@ -5,6 +5,8 @@ import { StructuredToolInterface } from "@langchain/core/tools";
 import { isLocalTool } from "../local_tools/base";
 import { StateAnnotation } from "../llm";
 import { Logger } from '../../logger';
+import { z } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 
 export type ToolNodeOptions = {
   name?: string;
@@ -15,19 +17,16 @@ export type ToolNodeOptions = {
 export class ToolNode {
   private static tools: StructuredToolInterface[] = [];
   private static handleToolErrors: boolean = true;
-  private readonly logger: Logger;
+  private static logger: Logger;
 
-  constructor() {
-    this.logger = Logger.getInstance();
-  }
-
-  static create(tools: StructuredToolInterface[], options?: ToolNodeOptions) {
+  static async create(tools: StructuredToolInterface[], options?: ToolNodeOptions) {
+    ToolNode.logger = await Logger.init();
     ToolNode.tools = tools;
     ToolNode.handleToolErrors = options?.handleToolErrors ?? true;
     return new ToolNode();
   }
 
-  private createToolMessage(tool: StructuredToolInterface, output: any, call: { name: string; id?: string }): ToolMessage {
+  private static createToolMessage(tool: StructuredToolInterface, output: any, call: { name: string; id?: string }): ToolMessage {
     if (isLocalTool(tool)) {
       if (tool.outputFormat.method === 'value') {
         return new ToolMessage({
@@ -45,6 +44,49 @@ export class ToolNode {
     });
   }
 
+  private static createErrorToolMessage(
+    call: { name: string; id?: string },
+    error: Error,
+    tool?: StructuredToolInterface
+  ): ToolMessage {
+    let content = `Error: ${error.message}\n\n`;
+
+    if (tool?.schema instanceof z.ZodObject) {
+      const jsonSchema = zodToJsonSchema(tool.schema, call.name);
+      content += `Expected schema:\n${JSON.stringify(jsonSchema, null, 2)}\n\n`;
+      content += `Please retry the tool call with arguments that match this schema.`;
+    } else {
+      content += `Please ensure your tool call arguments match the required schema.`;
+    }
+
+    return new ToolMessage({
+      name: call.name,
+      content,
+      tool_call_id: call.id ?? "",
+    });
+  }
+
+  private static async validateToolInput(tool: StructuredToolInterface, call: { name: string; args: any; id?: string }) {
+    try {
+      // For DynamicStructuredTool, we need to validate against its schema
+      if ('schema' in tool && tool.schema instanceof z.ZodObject) {
+        await tool.schema.parseAsync(call.args);
+        return true;
+      }
+      return true;
+    } catch (error) {
+      const jsonSchema = tool.schema ? zodToJsonSchema(tool.schema, call.name) : null;
+      await ToolNode.logger.warn('TOOL_NODE', 'Tool input validation failed', {
+        toolName: call.name,
+        toolId: call.id,
+        error: error instanceof Error ? error.message : String(error),
+        providedArgs: call.args,
+        schema: jsonSchema
+      });
+      return false;
+    }
+  }
+
   async invoke(state: typeof StateAnnotation.State, config?: RunnableConfig) {
     const messages = state.messages;
     const message = messages[messages.length - 1];
@@ -55,11 +97,11 @@ export class ToolNode {
 
     const tool_calls = (message as AIMessage).tool_calls;
     if (!tool_calls) {
-      await this.logger.debug('TOOL_NODE', 'No tool calls found in message');
+      await ToolNode.logger.debug('TOOL_NODE', 'No tool calls found in message');
       return { messages: [] };
     }
 
-    await this.logger.info('TOOL_NODE', 'Processing tool calls', {
+    await ToolNode.logger.info('TOOL_NODE', 'Processing tool calls', {
       numCalls: tool_calls.length,
       toolNames: tool_calls.map(call => call.name)
     });
@@ -70,15 +112,21 @@ export class ToolNode {
 
         if (!tool) {
           const error = `Tool "${call.name}" not found`;
-          await this.logger.error('TOOL_NODE', error, {
+          await ToolNode.logger.error('TOOL_NODE', error, {
             requestedTool: call.name,
             availableTools: ToolNode.tools.map(t => t.name)
           });
-          throw new Error(error);
+          return ToolNode.createErrorToolMessage(call, new Error(error));
         }
 
         try {
-          await this.logger.debug('TOOL_NODE', 'Executing tool', {
+          // Validate tool input before execution
+          const isValid = await ToolNode.validateToolInput(tool, call);
+          if (!isValid) {
+            return ToolNode.createErrorToolMessage(call, new Error('Invalid tool arguments'), tool);
+          }
+
+          await ToolNode.logger.debug('TOOL_NODE', 'Executing tool', {
             toolName: call.name,
             toolId: call.id,
             arguments: call.args
@@ -89,7 +137,7 @@ export class ToolNode {
             config
           );
 
-          await this.logger.debug('TOOL_NODE', 'Tool execution completed', {
+          await ToolNode.logger.debug('TOOL_NODE', 'Tool execution completed', {
             toolName: call.name,
             toolId: call.id,
             outputType: typeof output,
@@ -101,9 +149,9 @@ export class ToolNode {
             return output;
           }
 
-          return this.createToolMessage(tool, output, call);
+          return ToolNode.createToolMessage(tool, output, call);
         } catch (e: any) {
-          await this.logger.error('TOOL_NODE', `Error executing tool ${call.name}`, {
+          await ToolNode.logger.error('TOOL_NODE', `Error executing tool ${call.name}`, {
             error: e instanceof Error ? e.stack : String(e),
             toolName: call.name,
             toolId: call.id,
@@ -116,24 +164,22 @@ export class ToolNode {
           if (isGraphInterrupt(e.name)) {
             throw e;
           }
-          return new ToolMessage({
-            content: `Error: ${e.message}\n Please try again with correct parameters.`,
-            name: call.name,
-            tool_call_id: call.id ?? "",
-          });
+
+          // Create a tool message with the error instead of throwing
+          return ToolNode.createErrorToolMessage(call, e, tool);
         }
       })
     );
 
     if (!outputs.some(isCommand)) {
-      await this.logger.debug('TOOL_NODE', 'All tool executions completed', {
+      await ToolNode.logger.debug('TOOL_NODE', 'All tool executions completed', {
         numOutputs: outputs.length,
         outputTypes: outputs.map(o => typeof o)
       });
       return { messages: outputs };
     }
 
-    await this.logger.debug('TOOL_NODE', 'Processing command outputs', {
+    await ToolNode.logger.debug('TOOL_NODE', 'Processing command outputs', {
       numOutputs: outputs.length,
       hasCommands: true
     });
