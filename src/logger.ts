@@ -10,8 +10,6 @@ export interface LogEntry {
   metadata?: Record<string, any>;
 }
 
-export type LogLevel = LogEntry['level'] | 'false';
-
 export class Logger {
   private static instance: Logger;
   private readonly logDir: string;
