@@ -355,7 +355,17 @@ export class CLI {
           queueLength: this.inputQueue.length
         }
       });
-      throw error;
+
+      // Don't rethrow if it's an AbortError
+      if (!(error instanceof Error && error.message === 'Aborted')) {
+        throw error;
+      }
+
+      // Ensure proper cleanup
+      this.isProcessingInput = false;
+      if (!this.isCurrentlyInterrupted) {
+        this.resetReadline();
+      }
     } finally {
       this.currentAbortController = null;
 
