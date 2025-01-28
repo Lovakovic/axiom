@@ -16,7 +16,7 @@ MCP (Model Context Protocol) is a project that aims to create a seamless desktop
 
 1. Clone the repository
 ```bash
-git clone [your-repository-url]
+git clone https://github.com/Lovakovic/mcp.git
 cd mcp
 ```
 
