@@ -56,7 +56,7 @@ export class MCPClient {
       name,
       arguments: args
     }, undefined, {
-      timeout: 300000 // 5 min
+      timeout: 600000 // 10 min
     });
     return result as CallToolResult;
   }
