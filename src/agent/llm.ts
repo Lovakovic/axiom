@@ -94,7 +94,7 @@ export class Agent {
         }).bindTools(allTools);
 
         // Create our tool node
-        const toolNode = ToolNode.create(allTools, {handleToolErrors: true});
+        const toolNode = await ToolNode.create(allTools, {handleToolErrors: true});
 
         // Define continue condition
         const shouldContinue = (state: typeof StateAnnotation.State) => {
