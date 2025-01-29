@@ -1,45 +1,62 @@
-# MCP (Model Context Protocol)
+# axiom
 
-A desktop assistant implementation for Linux and macOS users that enables natural interaction with AI through a command-line interface.
+Natural language → System commands. No guardrails.
 
-## Description
+## What is it?
 
-MCP (Model Context Protocol) is a project that aims to create a seamless desktop assistant experience for Linux and macOS users. It provides a CLI interface for interacting with AI assistants, enabling natural language communication and system operations.
+`axiom` is a high-autonomy CLI agent that transforms natural language into system commands and executes them immediately. It's the neural bridge between human intent and machine execution.
+
+## ⚠️ Warning
+
+This tool executes commands with maximum autonomy and minimal safety checks. You need:
+- Solid understanding of your system
+- Strong AI prompting skills
+- Quick Ctrl+C reflexes
+
+Not for production systems or the faint of heart.
 
 ## Prerequisites
 
 - Node.js 23.x
-- npm (comes with Node.js)
-- An Anthropic API key
+- Anthropic API key
+- Understanding of prompt engineering
+- Trust in AI systems
 
-## Getting Started
+## Quick Start
 
-1. Clone the repository
 ```bash
-git clone https://github.com/Lovakovic/mcp.git
-cd mcp
+npm install -g axiom
+echo "ANTHROPIC_API_KEY=your_key" > ~/.axiomrc
+axiom
 ```
 
-2. Install dependencies
+## Control
+
+The only safety net is your Ctrl+C. Use it wisely:
+- During command generation
+- During command execution
+- Between command sequences
+
+## Effective Usage
+
+Success depends heavily on your prompting skills:
 ```bash
-npm install
+# Bad prompt (vague, dangerous)
+> clean up my system
+
+# Good prompt (specific, bounded context)
+> remove all node_modules dirs under ~/projects older than 30 days
 ```
 
-3. Configure environment
-```bash
-# Create a .env file in the project root and add your Anthropic API key
-echo "ANTHROPIC_API_KEY=your_api_key_here" > .env
-```
+## Philosophy
 
-4. Start the application
-```bash
-# First, start the server
-npm run start:server
+`axiom` optimizes for:
+- Speed over safety
+- Autonomy over confirmation
+- Power over protection
 
-# Then, in a new terminal, start the agent
-npm run start:agent
-```
+For users who trust their AI and value rapid execution over careful consideration.
 
-The CLI interface will attach to your terminal, allowing you to interact with the AI assistant through natural language commands.
+## License
 
-
+MIT
