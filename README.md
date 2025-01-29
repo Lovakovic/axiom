@@ -24,10 +24,31 @@ Not for production systems or the faint of heart.
 
 ## Quick Start
 
+1. Clone the repository and install dependencies:
 ```bash
-npm install -g axiom
-echo "ANTHROPIC_API_KEY=your_key" > ~/.axiomrc
-axiom
+npm install
+```
+
+2. Set up your environment:
+- Create a `.env` file in the project root
+- Add your Anthropic API key:
+```bash
+ANTHROPIC_API_KEY=your_key
+```
+
+3. Start the agent:
+```bash
+npm run start:agent
+```
+
+4. (Optional but recommended) Add a global alias to access the agent from anywhere:
+Add this line to your `~/.bashrc`:
+```bash
+alias assistant='cd /path/to/project && npm run start:agent'
+```
+Then reload your shell configuration:
+```bash
+source ~/.bashrc
 ```
 
 ## Control
