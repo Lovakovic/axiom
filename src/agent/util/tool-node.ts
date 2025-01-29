@@ -45,7 +45,7 @@ export class ToolNode {
   }
 
   private static createErrorToolMessage(
-    call: { name: string; id?: string },
+    call: { name: string; id: string },
     error: Error,
     tool?: StructuredToolInterface
   ): ToolMessage {
@@ -62,7 +62,7 @@ export class ToolNode {
     return new ToolMessage({
       name: call.name,
       content,
-      tool_call_id: call.id ?? "",
+      tool_call_id: call.id,
     });
   }
 
@@ -101,6 +101,18 @@ export class ToolNode {
       return { messages: [] };
     }
 
+    // Add validation for tool call IDs
+    const missingIds = tool_calls.filter(call => !call.id);
+    if (missingIds.length > 0) {
+      await ToolNode.logger.error('TOOL_NODE', 'Tool calls missing IDs', {
+        invalidCalls: missingIds.map(call => ({
+          name: call.name,
+          args: call.args
+        }))
+      });
+      throw new Error('All tool calls must have valid IDs. This is required for proper message tracking.');
+    }
+
     await ToolNode.logger.info('TOOL_NODE', 'Processing tool calls', {
       numCalls: tool_calls.length,
       toolNames: tool_calls.map(call => call.name)
@@ -116,14 +128,14 @@ export class ToolNode {
             requestedTool: call.name,
             availableTools: ToolNode.tools.map(t => t.name)
           });
-          return ToolNode.createErrorToolMessage(call, new Error(error));
+          return ToolNode.createErrorToolMessage({ name: call.name, id: call.id! }, new Error(error));
         }
 
         try {
           // Validate tool input before execution
           const isValid = await ToolNode.validateToolInput(tool, call);
           if (!isValid) {
-            return ToolNode.createErrorToolMessage(call, new Error('Invalid tool arguments'), tool);
+            return ToolNode.createErrorToolMessage({ name: call.name, id: call.id! }, new Error('Invalid tool arguments'), tool);
           }
 
           await ToolNode.logger.debug('TOOL_NODE', 'Executing tool', {
@@ -166,7 +178,7 @@ export class ToolNode {
           }
 
           // Create a tool message with the error instead of throwing
-          return ToolNode.createErrorToolMessage(call, e, tool);
+          return ToolNode.createErrorToolMessage({ name: call.name, id: call.id! }, e, tool);
         }
       })
     );
