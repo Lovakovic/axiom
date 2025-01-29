@@ -41,15 +41,13 @@ ANTHROPIC_API_KEY=your_key
 npm run start:agent
 ```
 
-4. (Optional but recommended) Add a global alias to access the agent from anywhere:
-Add this line to your `~/.bashrc`:
-```bash
-alias assistant='cd /path/to/project && npm run start:agent'
-```
-Then reload your shell configuration:
-```bash
-source ~/.bashrc
-```
+4. (Optional but recommended) Let your AI assistant configure itself:
+   1. First, start the agent using `npm run start:agent`
+   2. Then, give it these instructions:
+   ```markdown
+   I need you to configure yourself so I can call you from anywhere. Set a permanent alias for yourself, that's the start:agent script in package.json at: /path/to/package.json. I want to be able to run you by just calling `axiom` in terminal.
+   ```
+   3. 🪄 Watch as it sets everything up automatically!
 
 ## Control
 
