@@ -1,3 +1,7 @@
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 import {AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage} from "@langchain/core/messages";
 import {SystemMessagePromptTemplate} from "@langchain/core/prompts";
 import {ChatAnthropic} from "@langchain/anthropic";
@@ -150,12 +154,29 @@ export class Agent {
 
     private static async getSystemMessage(mcpClient: MCPClient): Promise<SystemMessage> {
         try {
+            const checkCommand = async (cmd: string): Promise<boolean> => {
+                try {
+                    await execAsync(`which ${cmd}`);
+                    return true;
+                } catch {
+                    return false;
+                }
+            };
+
             // Get the system prompt from the server with current system info
             const promptResult = await mcpClient.getPrompt("shell-system", {
                 user: os.userInfo().username,
                 OS: `${os.type()} ${os.release()}`,
                 shell_type: process.env.SHELL ?? "Unknown",
                 date_time: new Date().toISOString(),
+                architecture: os.arch(),
+                default_editor: process.env.EDITOR || process.env.VISUAL || "Unknown",
+                current_dir: process.cwd(),
+                has_tree: (await checkCommand('tree')).toString(),
+                has_git: (await checkCommand('git')).toString(),
+                has_jq: (await checkCommand('jq')).toString(),
+                has_curl: (await checkCommand('curl')).toString(),
+                has_wget: (await checkCommand('wget')).toString()
             });
 
             // Create a template that combines base message and server instructions
