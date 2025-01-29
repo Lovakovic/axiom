@@ -66,9 +66,38 @@ export class ToolNode {
     });
   }
 
-  private static async validateToolInput(tool: StructuredToolInterface, call: { name: string; args: any; id?: string }) {
+  private static async validateToolInput(tool: StructuredToolInterface, call: { name: string; args: any; id?: string }, message: AIMessage) {
     try {
-      // For DynamicStructuredTool, we need to validate against its schema
+      // Log the original state for debugging purposes
+      await ToolNode.logger.debug('TOOL_NODE', 'Validating tool input', {
+        toolName: call.name,
+        toolId: call.id,
+        originalArgs: call.args
+      });
+
+      // For empty or undefined args, modify the original tool call in the message
+      if (!call.args || Object.keys(call.args).length === 0) {
+        // Find and modify the original tool call in the message
+        const originalToolCall = message.tool_calls?.find(tc => tc.id === call.id);
+        if (originalToolCall) {
+          originalToolCall.args = {
+            __reasoning: "I notice I called this tool but might have failed to provide the required arguments. This could be mistake in my tool usage. I should review the tool's schema and provide all necessary arguments.",
+          };
+
+          // Update our local reference to match
+          call.args = originalToolCall.args;
+        }
+
+        await ToolNode.logger.warn('TOOL_NODE', 'Empty arguments detected, adding self-reflection', {
+          toolName: call.name,
+          toolId: call.id,
+          modifiedArgs: call.args
+        });
+
+        return false;
+      }
+
+      // For DynamicStructuredTool, validate against its schema
       if ('schema' in tool && tool.schema instanceof z.ZodObject) {
         await tool.schema.parseAsync(call.args);
         return true;
@@ -132,8 +161,8 @@ export class ToolNode {
         }
 
         try {
-          // Validate tool input before execution
-          const isValid = await ToolNode.validateToolInput(tool, call);
+          // Validate tool input before execution, passing the original message
+          const isValid = await ToolNode.validateToolInput(tool, call, message);
           if (!isValid) {
             return ToolNode.createErrorToolMessage({ name: call.name, id: call.id! }, new Error('Invalid tool arguments'), tool);
           }
