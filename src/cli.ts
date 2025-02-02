@@ -31,9 +31,9 @@ export class CLI {
   private conversationBuffer: ConversationMessage[] = [];
   private rl: readline.Interface;
 
-  constructor(logger: Logger) {
+  constructor(threadId: string, logger: Logger) {
+    this.threadId = threadId;
     this.logger = logger;
-    this.threadId = Math.random().toString(36).substring(7);
 
     this.rl = readline.createInterface({
       input: process.stdin,
@@ -448,8 +448,10 @@ process.on('unhandledRejection', async (error) => {
     const logger = await Logger.init();
     await logger.info('STARTUP', 'Starting main process');
 
+    const threadId = Math.random().toString(36).substring(7);
+
     // Create and initialize CLI with the logger
-    const cli = new CLI(logger);
+    const cli = new CLI(threadId, logger);
     await cli.init();
     await cli.start();
   } catch (error) {

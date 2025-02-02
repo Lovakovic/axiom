@@ -1,12 +1,12 @@
-import { AIMessage, isBaseMessage, ToolMessage } from "@langchain/core/messages";
-import { RunnableConfig } from "@langchain/core/runnables";
-import { isCommand, isGraphInterrupt } from "@langchain/langgraph";
-import { StructuredToolInterface } from "@langchain/core/tools";
-import { isLocalTool } from "../local_tools/base";
-import { StateAnnotation } from "../llm";
-import { Logger } from '../../logger';
-import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import {AIMessage, isBaseMessage, ToolMessage} from "@langchain/core/messages";
+import {RunnableConfig} from "@langchain/core/runnables";
+import {isCommand, isGraphInterrupt} from "@langchain/langgraph";
+import {StructuredToolInterface} from "@langchain/core/tools";
+import {isLocalTool} from "../local_tools/base";
+import {StateAnnotation} from "../llm";
+import {Logger} from '../../logger';
+import {z} from 'zod';
+import {zodToJsonSchema} from 'zod-to-json-schema';
 
 export type ToolNodeOptions = {
   name?: string;
@@ -26,7 +26,10 @@ export class ToolNode {
     return new ToolNode();
   }
 
-  private static createToolMessage(tool: StructuredToolInterface, output: any, call: { name: string; id?: string }): ToolMessage {
+  private static createToolMessage(tool: StructuredToolInterface, output: any, call: {
+    name: string;
+    id?: string
+  }): ToolMessage {
     if (isLocalTool(tool)) {
       if (tool.outputFormat.method === 'value') {
         return new ToolMessage({
@@ -68,24 +71,42 @@ export class ToolNode {
 
   private static async validateToolInput(tool: StructuredToolInterface, call: { name: string; args: any; id?: string }, message: AIMessage) {
     try {
-      // Log the original state for debugging purposes
       await ToolNode.logger.debug('TOOL_NODE', 'Validating tool input', {
         toolName: call.name,
         toolId: call.id,
         originalArgs: call.args
       });
 
-      // For empty or undefined args, modify the original tool call in the message
+      // For empty or undefined args, modify both tool_calls and content
       if (!call.args || Object.keys(call.args).length === 0) {
+        const selfReflectionArgs = {
+          __reasoning: "I notice I called this tool but might have failed to provide the required arguments. This could be a mistake in my tool usage. I should review the tool's schema and provide all necessary arguments.",
+        };
+
         // Find and modify the original tool call in the message
         const originalToolCall = message.tool_calls?.find(tc => tc.id === call.id);
         if (originalToolCall) {
-          originalToolCall.args = {
-            __reasoning: "I notice I called this tool but might have failed to provide the required arguments. This could be mistake in my tool usage. I should review the tool's schema and provide all necessary arguments.",
-          };
+          originalToolCall.args = selfReflectionArgs;
 
           // Update our local reference to match
-          call.args = originalToolCall.args;
+          call.args = selfReflectionArgs;
+
+          // Find and update the corresponding tool_use content
+          if (Array.isArray(message.content)) {
+            const toolUseContent = message.content.find(
+              content =>
+                typeof content === 'object' &&
+                'type' in content &&
+                content.type === 'tool_use' &&
+                'id' in content &&
+                content.id === call.id
+            );
+
+            if (toolUseContent && typeof toolUseContent === 'object') {
+              // Update the input field with stringified self-reflection args
+              (toolUseContent as any).input = JSON.stringify(selfReflectionArgs);
+            }
+          }
         }
 
         await ToolNode.logger.warn('TOOL_NODE', 'Empty arguments detected, adding self-reflection', {
@@ -127,7 +148,7 @@ export class ToolNode {
     const tool_calls = (message as AIMessage).tool_calls;
     if (!tool_calls) {
       await ToolNode.logger.debug('TOOL_NODE', 'No tool calls found in message');
-      return { messages: [] };
+      return {messages: []};
     }
 
     // Add validation for tool call IDs
@@ -157,14 +178,17 @@ export class ToolNode {
             requestedTool: call.name,
             availableTools: ToolNode.tools.map(t => t.name)
           });
-          return ToolNode.createErrorToolMessage({ name: call.name, id: call.id! }, new Error(error));
+          return ToolNode.createErrorToolMessage({name: call.name, id: call.id!}, new Error(error));
         }
 
         try {
           // Validate tool input before execution, passing the original message
           const isValid = await ToolNode.validateToolInput(tool, call, message);
           if (!isValid) {
-            return ToolNode.createErrorToolMessage({ name: call.name, id: call.id! }, new Error('Invalid tool arguments'), tool);
+            return ToolNode.createErrorToolMessage({
+              name: call.name,
+              id: call.id!
+            }, new Error('Invalid tool arguments'), tool);
           }
 
           await ToolNode.logger.debug('TOOL_NODE', 'Executing tool', {
@@ -174,7 +198,7 @@ export class ToolNode {
           });
 
           const output = await tool.invoke(
-            { ...call, type: "tool_call" },
+            {...call, type: "tool_call"},
             config
           );
 
@@ -207,7 +231,7 @@ export class ToolNode {
           }
 
           // Create a tool message with the error instead of throwing
-          return ToolNode.createErrorToolMessage({ name: call.name, id: call.id! }, e, tool);
+          return ToolNode.createErrorToolMessage({name: call.name, id: call.id!}, e, tool);
         }
       })
     );
@@ -217,7 +241,7 @@ export class ToolNode {
         numOutputs: outputs.length,
         outputTypes: outputs.map(o => typeof o)
       });
-      return { messages: outputs };
+      return {messages: outputs};
     }
 
     await ToolNode.logger.debug('TOOL_NODE', 'Processing command outputs', {

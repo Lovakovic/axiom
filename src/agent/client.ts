@@ -1,5 +1,5 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import {Client} from "@modelcontextprotocol/sdk/client/index.js";
+import {StdioClientTransport} from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
   BlobResourceContents,
   CallToolResult,
@@ -8,7 +8,7 @@ import {
   TextResourceContents,
   Tool
 } from "@modelcontextprotocol/sdk/types.js";
-import { ReadResourceResult } from "@modelcontextprotocol/sdk/types";
+import {ReadResourceResult} from "@modelcontextprotocol/sdk/types";
 
 export class MCPClient {
   private readonly client: Client;
@@ -31,7 +31,7 @@ export class MCPClient {
   }
 
   async connect(command: string, args: string[] = []) {
-    this.transport = new StdioClientTransport({ command, args });
+    this.transport = new StdioClientTransport({command, args});
     await this.client.connect(this.transport);
   }
 
@@ -81,7 +81,7 @@ export class MCPClient {
   }
 
   async readResource(uri: string): Promise<ReadResourceResult> {
-    return await this.client.readResource({ uri });
+    return await this.client.readResource({uri});
   }
 
   // Helper method to get base64 data from a resource
