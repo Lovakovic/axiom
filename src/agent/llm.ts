@@ -130,8 +130,6 @@ export class Agent {
         }
       });
 
-      console.log(JSON.stringify(filteredMessages, null, 2));
-
       const response = await model.invoke([systemMessage, ...filteredMessages]);
       return {messages: [response]};
     };
