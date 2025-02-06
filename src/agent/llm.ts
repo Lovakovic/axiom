@@ -13,6 +13,7 @@ import {ToolNode} from "./util/tool-node";
 import {createViewImageTool} from "./local_tools/image_tool";
 import os from 'os';
 import dotenv from "dotenv";
+import {ChatOpenAI} from "@langchain/openai";
 
 // Load environment variables
 dotenv.config();
@@ -90,11 +91,17 @@ export class Agent {
     const systemMessage = await Agent.getSystemMessage(mcpClient);
 
     // Create the model with streaming enabled
-    const model = new ChatAnthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-      model: "claude-3-5-sonnet-20241022",
-      temperature: 0,
-      streaming: true,
+    // const model = new ChatAnthropic({
+    //   apiKey: process.env.ANTHROPIC_API_KEY,
+    //   model: "claude-3-5-sonnet-20241022",
+    //   temperature: 0,
+    //   streaming: true,
+    // }).bindTools(allTools);
+
+    const model = new ChatOpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      model: 'o3-mini',
+      streaming: true
     }).bindTools(allTools);
 
     // Create our tool node
@@ -123,11 +130,7 @@ export class Agent {
 
       // Clear out any messages with empty content
       const filteredMessages = messages.filter((message) => {
-        if (typeof message.content === 'string') {
-          return message.content.trim() !== '';
-        } else if (message.content.length > 0) {
-          return true;
-        }
+        return typeof message.content === 'string' || message.content.length > 0;
       });
 
       const response = await model.invoke([systemMessage, ...filteredMessages]);
