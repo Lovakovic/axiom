@@ -199,77 +199,119 @@ export class Agent {
     }
   }
 
-  async* streamResponse(
+  async *streamResponse(
     input: string,
     threadId: string,
     options?: {
       signal?: AbortSignal;
-      previousBuffer?: { role: 'human' | 'ai', text: string }[];
+      previousBuffer?: { role: 'human' | 'ai'; text: string }[];
     }
   ): AsyncGenerator<StreamEvent> {
     let currentToolId: string | null = null;
 
     // Construct messages array based on whether we have a previous buffer
     const messages = options?.previousBuffer
-      ? options.previousBuffer.map((message) => {
-        return message.role === 'ai'
+      ? options.previousBuffer.map((message) =>
+        message.role === 'ai'
           ? new AIMessage(message.text)
-          : new HumanMessage(message.text);
-      })
+          : new HumanMessage(message.text)
+      )
       : [new HumanMessage(input)];
 
     for await (const event of this.app.streamEvents(
-      {messages},
+      { messages },
       {
-        configurable: {thread_id: threadId},
-        version: "v2",
+        configurable: { thread_id: threadId },
+        version: 'v2',
         recursionLimit: 75,
-        signal: options?.signal
+        signal: options?.signal,
       }
     )) {
-      if (event.event !== "on_chat_model_stream") {
+      if (event.event !== 'on_chat_model_stream') {
         continue;
       }
       const chunk = event.data.chunk as AIMessageChunk;
 
-      for (const contentItem of chunk.content) {
-        if (typeof contentItem === 'string') {
-          yield {type: "text", content: contentItem};
-        } else if (contentItem.type === "text_delta") {
-          if (contentItem.text) {
-            yield {type: "text", content: contentItem.text};
-          }
-        } else if (contentItem.type === "tool_use") {
-          // Store the current tool ID
-          currentToolId = contentItem.id;
+      console.log(chunk);
 
-          // Emit a tool start event
-          yield {
-            type: "tool_start",
-            tool: {
-              name: contentItem.name,
-              id: contentItem.id
+      // Process Anthropic-style events found in chunk.content
+      if (chunk.content && Array.isArray(chunk.content)) {
+        for (const contentItem of chunk.content) {
+          if (typeof contentItem === 'string') {
+            yield { type: 'text', content: contentItem };
+          } else if (contentItem.type === 'text_delta') {
+            if (contentItem.text) {
+              yield { type: 'text', content: contentItem.text };
             }
+          } else if (contentItem.type === 'tool_use') {
+            // For Anthropic streams, store the current tool id and emit a tool_start event
+            currentToolId = contentItem.id;
+            yield {
+              type: 'tool_start',
+              tool: {
+                name: contentItem.name,
+                id: contentItem.id,
+              },
+            };
+            // Also emit the tool input if it exists
+            if (contentItem.input) {
+              yield {
+                type: 'tool_input',
+                content: contentItem.input,
+                toolId: contentItem.id,
+              };
+            }
+          } else if (contentItem.type === 'input_json_delta') {
+            if (contentItem.input && currentToolId) {
+              yield {
+                type: 'tool_input',
+                content: contentItem.input,
+                toolId: currentToolId,
+              };
+            }
+          }
+        }
+      }
+
+      // --- OpenAI-style tool call handling ---
+
+      // Process any tool_calls (which signal the start of a tool invocation)
+      if (chunk.tool_calls && Array.isArray(chunk.tool_calls)) {
+        for (const toolCall of chunk.tool_calls) {
+          // Save the tool ID so that subsequent chunks can be associated with it
+          currentToolId = toolCall.id ?? null;
+          yield {
+            type: 'tool_start',
+            tool: {
+              name: toolCall.name,
+              id: toolCall.id,
+            },
           };
 
-          // Then emit the tool input if it exists
-          if (contentItem.input) {
+          // If there's an immediate input available on the tool call, yield it
+          if (toolCall.input) {
             yield {
-              type: "tool_input",
-              content: contentItem.input,
-              toolId: contentItem.id
+              type: 'tool_input',
+              content: toolCall.input,
+              toolId: toolCall.id,
             };
           }
-        } else if (contentItem.type === "input_json_delta") {
-          if (contentItem.input && currentToolId) {
+        }
+      }
+
+      // Process any tool_call_chunks (which provide incremental input for a tool)
+      if (chunk.tool_call_chunks && Array.isArray(chunk.tool_call_chunks)) {
+        for (const toolCallChunk of chunk.tool_call_chunks) {
+          if (toolCallChunk.args && currentToolId) {
             yield {
-              type: "tool_input",
-              content: contentItem.input,
-              toolId: currentToolId
+              type: 'tool_input',
+              content: toolCallChunk.args,
+              toolId: currentToolId,
             };
           }
         }
       }
     }
   }
+
 }
