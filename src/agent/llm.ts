@@ -14,6 +14,7 @@ import {createViewImageTool} from "./local_tools/image_tool";
 import os from 'os';
 import dotenv from "dotenv";
 import {ChatOpenAI} from "@langchain/openai";
+import { StreamEvent } from "./types";
 
 // Load environment variables
 dotenv.config();
@@ -25,22 +26,6 @@ export const StateAnnotation = Annotation.Root({
   }),
 });
 
-export interface ToolUseEvent {
-  name: string;
-  id: string;
-}
-
-export type StreamEvent = {
-  type: "text";
-  content: string;
-} | {
-  type: "tool_start";
-  tool: ToolUseEvent;
-} | {
-  type: "tool_input";
-  content: string;
-  toolId: string;
-};
 
 
 export class Agent {
@@ -207,7 +192,7 @@ export class Agent {
       previousBuffer?: { role: 'human' | 'ai'; text: string }[];
     }
   ): AsyncGenerator<StreamEvent> {
-    let currentToolId: string | null = null;
+    let currentToolId: string = '';
 
     // Construct messages array based on whether we have a previous buffer
     const messages = options?.previousBuffer
@@ -231,8 +216,6 @@ export class Agent {
         continue;
       }
       const chunk = event.data.chunk as AIMessageChunk;
-
-      console.log(chunk);
 
       // Process Anthropic-style events found in chunk.content
       if (chunk.content && Array.isArray(chunk.content)) {
@@ -278,24 +261,16 @@ export class Agent {
       // Process any tool_calls (which signal the start of a tool invocation)
       if (chunk.tool_calls && Array.isArray(chunk.tool_calls)) {
         for (const toolCall of chunk.tool_calls) {
-          // Save the tool ID so that subsequent chunks can be associated with it
-          currentToolId = toolCall.id ?? null;
+          // Ensure we have a string id (using a fallback if necessary)
+          const toolId = toolCall.id ?? 'unknown-tool-id';
+          currentToolId = toolId;
           yield {
             type: 'tool_start',
             tool: {
               name: toolCall.name,
-              id: toolCall.id,
+              id: toolId,
             },
           };
-
-          // If there's an immediate input available on the tool call, yield it
-          if (toolCall.input) {
-            yield {
-              type: 'tool_input',
-              content: toolCall.input,
-              toolId: toolCall.id,
-            };
-          }
         }
       }
 
