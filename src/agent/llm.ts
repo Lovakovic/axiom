@@ -26,8 +26,6 @@ export const StateAnnotation = Annotation.Root({
   }),
 });
 
-
-
 export class Agent {
   private readonly app: any;
   private readonly mcpClient: MCPClient;
@@ -38,8 +36,17 @@ export class Agent {
   }
 
   static async init(mcpClient: MCPClient): Promise<Agent> {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error("ANTHROPIC_API_KEY is not set in environment variables");
+    // Determine which agent to use based on the AGENT_MODEL environment variable.
+    // Use "o3-mini" as default.
+    const agentType = process.env.AGENT_MODEL || "o3-mini";
+    if (agentType === "claude-3-5-sonnet") {
+      if (!process.env.ANTHROPIC_API_KEY) {
+        throw new Error("ANTHROPIC_API_KEY is not set in environment variables for Claude");
+      }
+    } else {
+      if (!process.env.OPENAI_API_KEY) {
+        throw new Error("OPENAI_API_KEY is not set in environment variables for o3-mini");
+      }
     }
 
     // Get MCP tools
@@ -76,18 +83,21 @@ export class Agent {
     const systemMessage = await Agent.getSystemMessage(mcpClient);
 
     // Create the model with streaming enabled
-    // const model = new ChatAnthropic({
-    //   apiKey: process.env.ANTHROPIC_API_KEY,
-    //   model: "claude-3-5-sonnet-20241022",
-    //   temperature: 0,
-    //   streaming: true,
-    // }).bindTools(allTools);
-
-    const model = new ChatOpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-      model: 'o3-mini',
-      streaming: true
-    }).bindTools(allTools);
+    let model;
+    if (agentType === "claude-3-5-sonnet") {
+      model = new ChatAnthropic({
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        model: "claude-3-5-sonnet-20241022",
+        temperature: 0,
+        streaming: true,
+      }).bindTools(allTools);
+    } else {
+      model = new ChatOpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+        model: 'o3-mini',
+        streaming: true
+      }).bindTools(allTools);
+    }
 
     // Create our tool node
     const toolNode = await ToolNode.create(allTools, {handleToolErrors: true});
@@ -151,7 +161,7 @@ export class Agent {
       };
 
       // Get the system prompt from the server with current system info
-      const promptResult = await mcpClient.getPrompt("shell-system", {
+      const promptResult = await mcpClient.getPrompt('shell-system', {
         user: os.userInfo().username,
         OS: `${os.type()} ${os.release()}`,
         shell_type: process.env.SHELL ?? "Unknown",
@@ -178,9 +188,11 @@ export class Agent {
     } catch (error) {
       console.error("Failed to get system prompt:", error);
       // Fallback to basic system message if server prompt fails
-      return new SystemMessage(
-        "You are a helpful AI assistant. You're brief, concise and up to the point, unless asked otherwise."
-      );
+      const agentType = process.env.AGENT_MODEL || "o3-mini";
+      const fallbackText = agentType === "claude-3-5-sonnet" ?
+        "You are a helpful AI assistant. You're brief, concise and up to the point, unless asked otherwise." :
+        "You are a helpful AI assistant. You're brief, concise and up to the point, unless asked otherwise.";
+      return new SystemMessage(fallbackText);
     }
   }
 
@@ -217,14 +229,12 @@ export class Agent {
       }
       const chunk = event.data.chunk as AIMessageChunk;
 
-      // Process Anthropic-style events found in chunk.content
+      // Anthropic-style events found in chunk.content
       if (chunk.content && Array.isArray(chunk.content)) {
         for (const contentItem of chunk.content) {
-          if (typeof contentItem === 'string') {
-            yield { type: 'text', content: contentItem };
-          } else if (contentItem.type === 'text_delta') {
+          if (contentItem.type === 'text_delta') {
             if (contentItem.text) {
-              yield { type: 'text', content: contentItem.text };
+              yield {type: 'text', content: contentItem.text};
             }
           } else if (contentItem.type === 'tool_use') {
             // For Anthropic streams, store the current tool id and emit a tool_start event
@@ -256,7 +266,12 @@ export class Agent {
         }
       }
 
-      // --- OpenAI-style tool call handling ---
+      // --- OpenAI-style event handling ---
+
+      // Process text content
+      if (chunk.content && typeof chunk.content === 'string') {
+        yield {type: 'text', content: chunk.content};
+      }
 
       // Process any tool_calls (which signal the start of a tool invocation)
       if (chunk.tool_calls && Array.isArray(chunk.tool_calls)) {
@@ -288,5 +303,4 @@ export class Agent {
       }
     }
   }
-
 }

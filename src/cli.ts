@@ -308,6 +308,7 @@ export class CLI {
         hasAbortController: true
       });
 
+      let lastEventWasTool = false;
       for await (const event of this.agent.streamResponse(line, this.threadId, {
         signal: this.currentAbortController.signal,
         previousBuffer: this.conversationBuffer
@@ -325,6 +326,10 @@ export class CLI {
 
         switch (event.type) {
           case "text": {
+            if (lastEventWasTool) {
+              process.stdout.write("\n");
+              lastEventWasTool = false;
+            }
             process.stdout.write(YELLOW + event.content + RESET);
             const lastMsg = this.conversationBuffer[this.conversationBuffer.length - 1];
             if (!lastMsg || lastMsg.role !== 'ai') {
@@ -336,10 +341,12 @@ export class CLI {
           }
           case "tool_start": {
             process.stdout.write("\n" + BLUE + event.tool.name + ": " + RESET);
+            lastEventWasTool = true;
             break;
           }
           case "tool_input": {
             process.stdout.write(BLUE + (event.content || "") + RESET);
+            lastEventWasTool = true;
             break;
           }
         }
@@ -356,12 +363,10 @@ export class CLI {
         }
       });
 
-      // Don't rethrow if it's an AbortError
       if (!(error instanceof Error && error.message === 'Aborted')) {
         throw error;
       }
 
-      // Ensure proper cleanup
       this.isProcessingInput = false;
       if (!this.isCurrentlyInterrupted) {
         this.resetReadline();
@@ -417,7 +422,6 @@ export class CLI {
   }
 }
 
-// Top-level error handling
 process.on('uncaughtException', async (error) => {
   try {
     const logger = Logger.getInstance();
@@ -444,18 +448,15 @@ process.on('unhandledRejection', async (error) => {
 
 (async () => {
   try {
-    // Initialize the logger first
     const logger = await Logger.init();
     await logger.info('STARTUP', 'Starting main process');
 
     const threadId = Math.random().toString(36).substring(7);
 
-    // Create and initialize CLI with the logger
     const cli = new CLI(threadId, logger);
     await cli.init();
     await cli.start();
   } catch (error) {
-    // Get logger instance for error logging
     const logger = Logger.getInstance();
     await logger.error('STARTUP', 'Error in main process', {
       error: error instanceof Error ? error.stack : String(error)
