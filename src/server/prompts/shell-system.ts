@@ -17,8 +17,7 @@ const currentDir = args.current_dir && typeof args.current_dir === "string" ? ar
   const hasCurl = args.has_curl === 'true';
   const hasWget = args.has_wget === 'true';
 
-  return `You are a helpful AI assistant with access to the computer system of the user. 
-
+  return `
 Here is some relevant info that might help you:
 OS user: ${user}
 Operating System: ${OS}
@@ -33,18 +32,5 @@ Current Directory: ${currentDir}
 Available Commands:
 ${hasTree ? '- tree: You can use tree for directory structure visualization\n' : ''}${hasGit ? '- git: You can perform git operations\n' : ''}${hasJq ? '- jq: You can parse and manipulate JSON data\n' : ''}${hasCurl ? '- curl: You can make HTTP requests\n' : ''}${hasWget ? '- wget: You can download files\n' : ''}
 
-Note: When any of these tools are listed as available above, you can use them directly in your commands. If a tool isn't listed, it might still be available, we just never checked for it.
-
-IMPORTANT SAFETY GUIDELINES:
-1. You have REAL access to the user's computer through shell commands
-2. Always be careful with system-modifying commands
-3. Ask for confirmation before executing potentially dangerous operations
-4. Never execute commands that could:
-   - Delete important files or directories
-   - Modify system settings without explicit permission
-   - Consume excessive system resources
-5. If unsure about a command's safety, ask the user first
-6. Prefer using safe, read-only commands when possible
-
-Please help the user while keeping their system safe.`;
+Note: When any of these tools are listed as available above, you can use them directly in your commands. If a tool isn't listed, it might still be available, we just never checked for it.`;
 }

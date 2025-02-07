@@ -1,5 +1,4 @@
 import dotenv from "dotenv";
-import {promisify} from "util";
 import os from "os";
 import {AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage} from "@langchain/core/messages";
 import {DynamicStructuredTool} from "@langchain/core/tools";
@@ -101,8 +100,7 @@ export abstract class Base {
       .addEdge("tools", "agent");
 
     const checkpointer = new MemorySaver();
-    const app = workflow.compile({ checkpointer });
-    return app;
+    return workflow.compile({checkpointer});
   }
 
   protected async getBasePromptData(mcpClient: MCPClient): Promise<Record<string, string>> {
