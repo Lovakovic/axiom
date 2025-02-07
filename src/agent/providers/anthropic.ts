@@ -1,0 +1,31 @@
+import dotenv from "dotenv";
+import { ChatAnthropic } from "@langchain/anthropic";
+import { Base } from "../base";
+
+dotenv.config();
+
+export class Anthropic extends Base {
+  protected getProviderSpecificPrompt(): string {
+    return "You are a succinct AI assistant powered by Anthropic. Brief, precise, and to the point.";
+  }
+
+  protected createModel(allTools: any[]): any {
+    return new ChatAnthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      model: "claude-3-5-sonnet-20241022",
+      temperature: 0,
+      streaming: true,
+    }).bindTools(allTools);
+  }
+
+  public static async init(mcpClient: any): Promise<Anthropic> {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error("ANTHROPIC_API_KEY is not set in environment variables for Claude");
+    }
+    const agent = new Anthropic(mcpClient, null, null);
+    const { allTools, systemMessage, toolNode } = await agent.commonSetup();
+    agent.model = agent.createModel(allTools);
+    agent.app = agent.buildWorkflow(systemMessage, toolNode, allTools);
+    return agent;
+  }
+}

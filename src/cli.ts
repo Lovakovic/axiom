@@ -2,6 +2,7 @@ import { Agent } from "./agent/llm.js";
 import readline from 'readline';
 import { MCPClient } from "./agent/client";
 import { Logger } from './logger';
+import {Base} from "./agent/base";
 
 const YELLOW = '\x1b[33m';
 const BLUE = '\x1b[34m';
@@ -14,7 +15,7 @@ interface ConversationMessage {
 
 export class CLI {
   private readonly threadId: string;
-  private agent!: Agent;
+  private agent!: Base;
   private mcpClient!: MCPClient;
   private readonly originalStderr: NodeJS.WriteStream['write'];
   private readonly logger: Logger;
