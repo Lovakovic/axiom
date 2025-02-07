@@ -229,38 +229,12 @@ export class Agent {
       }
       const chunk = event.data.chunk as AIMessageChunk;
 
-      // Anthropic-style events found in chunk.content
+      // Anthropic-style text found in chunk.content
       if (chunk.content && Array.isArray(chunk.content)) {
         for (const contentItem of chunk.content) {
           if (contentItem.type === 'text_delta') {
             if (contentItem.text) {
               yield {type: 'text', content: contentItem.text};
-            }
-          } else if (contentItem.type === 'tool_use') {
-            // For Anthropic streams, store the current tool id and emit a tool_start event
-            currentToolId = contentItem.id;
-            yield {
-              type: 'tool_start',
-              tool: {
-                name: contentItem.name,
-                id: contentItem.id,
-              },
-            };
-            // Also emit the tool input if it exists
-            if (contentItem.input) {
-              yield {
-                type: 'tool_input',
-                content: contentItem.input,
-                toolId: contentItem.id,
-              };
-            }
-          } else if (contentItem.type === 'input_json_delta') {
-            if (contentItem.input && currentToolId) {
-              yield {
-                type: 'tool_input',
-                content: contentItem.input,
-                toolId: currentToolId,
-              };
             }
           }
         }
