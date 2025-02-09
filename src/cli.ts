@@ -2,7 +2,7 @@
 import readline from 'readline';
 import { MCPClient } from "./agent/client";
 import { Logger } from './logger';
-import { AgentManager } from "./agent/manager";  // Using AgentManager instead of single Agent
+import { AgentManager } from "./agent/manager";  // Using AgentManager for model switching
 
 const YELLOW = '\x1b[33m';
 const BLUE = '\x1b[34m';
@@ -27,8 +27,10 @@ export class CLI {
   private isProcessingInput = false;
 
   private readonly inputQueue: string[] = [];
-  private rl: readline.Interface;
+  private currentAbortController: AbortController | null = null;
+
   private conversationBuffer: ConversationMessage[] = [];
+  private rl: readline.Interface;
 
   constructor(threadId: string, logger: Logger) {
     this.threadId = threadId;
@@ -59,15 +61,12 @@ export class CLI {
   }
 
   public async init() {
-    await this.logger.info('INIT', 'Initializing CLI', {
-      threadId: this.threadId
-    });
-
+    await this.logger.info('INIT', 'Initializing CLI', { threadId: this.threadId });
     await this.logger.info('INIT', 'Starting MCP client initialization');
     this.mcpClient = new MCPClient();
     await this.mcpClient.connect("node", ["dist/server/index.js"]);
 
-    // Initialize the AgentManager with both providers
+    // Initialize AgentManager with both providers
     this.agentManager = new AgentManager();
     await this.agentManager.init(this.mcpClient);
 
@@ -100,7 +99,6 @@ export class CLI {
           isCurrentlyInterrupted: this.isCurrentlyInterrupted,
           wasInterrupted: this.wasInterrupted
         };
-
         this.isCurrentlyInterrupted = true;
         this.wasInterrupted = true;
 
@@ -116,7 +114,13 @@ export class CLI {
           clearTimeout(this.ctrlCTimeout);
         }
 
-        // Abort any ongoing requests if needed
+        // Abort any ongoing requests
+        if (this.currentAbortController) {
+          this.currentAbortController.abort();
+          this.currentAbortController = null;
+          await this.logger.debug('INTERRUPT', 'Aborted current controller');
+        }
+
         this.ctrlCTimeout = setTimeout(() => {
           this.ctrlCCount = 0;
           this.isCurrentlyInterrupted = false;
@@ -161,6 +165,16 @@ export class CLI {
           closed: (this.rl as any).closed
         }
       });
+
+      // Check for model switching command
+      const trimmed = line.trim();
+      if (trimmed.startsWith("/switch ")) {
+        const newAgent = trimmed.substring(8).trim().toLowerCase();
+        const switchMsg = this.agentManager.switchAgent(newAgent);
+        console.log(YELLOW + switchMsg + RESET);
+        this.rl.prompt();
+        return;
+      }
 
       this.inputQueue.push(line);
       await this.logger.debug('QUEUE', 'Input queued', {
@@ -249,8 +263,6 @@ export class CLI {
     }
   }
 
-  // Updated handleLine to include switch command logic and usage of active agent.
-  // Also wraps each output with yellow color and ensures output ends with a newline.
   private async handleLine(line: string) {
     await this.logger.debug('HANDLE', 'Starting line handling', {
       lineLength: line.length,
@@ -261,9 +273,7 @@ export class CLI {
       },
       bufferState: {
         conversationLength: this.conversationBuffer.length,
-        lastMessageRole: this.conversationBuffer.length > 0
-          ? this.conversationBuffer[this.conversationBuffer.length - 1].role
-          : null
+        lastMessageRole: this.conversationBuffer.length > 0 ? this.conversationBuffer[this.conversationBuffer.length - 1].role : null
       }
     });
 
@@ -273,50 +283,126 @@ export class CLI {
       return;
     }
 
-    // Check if the user wants to switch agents. Command: "/switch openai" or "/switch anthropic"
-    const trimmed = line.trim();
-    if (trimmed.startsWith("/switch ")) {
-      const newAgent = trimmed.substring(8).trim().toLowerCase();
-      const switchMsg = this.agentManager.switchAgent(newAgent);
-      console.log(YELLOW + switchMsg + RESET);
-      this.rl.prompt();
+    if (!this.rl.terminal) {
+      await this.logger.warn('HANDLE', 'Non-terminal readline detected, resetting', { currentTerminal: this.rl.terminal });
+      this.resetReadline();
       return;
     }
 
-    // Normal conversation: add human message to conversationBuffer
-    this.conversationBuffer.push({
-      role: 'human',
-      text: line
-    });
-
-    // Invoke the active agent's streamResponse using the conversationBuffer and threadId
-    let lastChunk = "";
     try {
+      if (this.wasInterrupted) {
+        await this.logger.info('RECONNECT', 'Reconnecting after interruption', {
+          wasInterrupted: true,
+          isCurrentlyInterrupted: this.isCurrentlyInterrupted
+        });
+
+        this.mcpClient = new MCPClient();
+        await this.mcpClient.connect("node", ["dist/server/index.js"]);
+        await this.agentManager.init(this.mcpClient);
+
+        await this.logger.info('RECONNECT', 'Reconnection successful');
+      }
+
+      // Add human message to conversation buffer
+      this.conversationBuffer.push({ role: 'human', text: line });
+
+      process.stdout.write("\nAgent: ");
+
+      this.currentAbortController = new AbortController();
+
+      await this.logger.debug('PROCESSING', 'Starting response processing', {
+        bufferSize: this.conversationBuffer.length,
+        hasAbortController: this.currentAbortController !== null
+      });
+
+      let toolEventOccurred = false;
       for await (const event of this.agentManager.activeAgent.streamResponse(
         line,
         this.threadId,
-        { previousBuffer: this.conversationBuffer }
+        { signal: this.currentAbortController.signal, previousBuffer: this.conversationBuffer }
       )) {
-        if (event.type === "text") {
-          // Wrap the output in yellow for consistency
-          process.stdout.write(YELLOW + event.content + RESET);
-          lastChunk = event.content;
+        if (this.isCurrentlyInterrupted) {
+          await this.logger.info('INTERRUPT', 'Processing interrupted mid-stream', {
+            isCurrentlyInterrupted: true,
+            wasInterrupted: true
+          });
+          this.isProcessingInput = false;
+          process.stdout.write("\n");
+          break;
         }
-        // Additional event types like tool_start or tool_input can be handled here if needed
+
+        switch (event.type) {
+          case "tool_start": {
+            if(event.tool.name) {
+              process.stdout.write("\n" + BLUE + event.tool.name + ": " + RESET);
+              toolEventOccurred = true;
+            }
+            break;
+          }
+          case "tool_input": {
+            // Append a newline after tool input to separate from subsequent agent output
+            process.stdout.write(BLUE + (event.content || "") + RESET);
+            toolEventOccurred = true;
+            break;
+          }
+          case "text": {
+            if (toolEventOccurred) {
+              process.stdout.write("\n");
+              toolEventOccurred = false;
+            }
+            process.stdout.write(YELLOW + event.content + RESET);
+            const lastMsg = this.conversationBuffer[this.conversationBuffer.length - 1];
+            if (!lastMsg || lastMsg.role !== 'ai') {
+              this.conversationBuffer.push({ role: 'ai', text: event.content || '' });
+            } else {
+              lastMsg.text += event.content || '';
+            }
+            break;
+          }
+        }
       }
-      // If the last chunk doesn't end with a newline, add one to avoid overwriting by the prompt.
-      if (!lastChunk.endsWith("\n")) {
+    } catch (error) {
+      await this.logger.error('HANDLE', 'Error in line handling', {
+        error: error instanceof Error ? error.stack : String(error),
+        lineContent: line,
+        currentState: {
+          isInterrupted: this.isCurrentlyInterrupted,
+          wasInterrupted: this.wasInterrupted,
+          isProcessing: this.isProcessingInput,
+          queueLength: this.inputQueue.length
+        }
+      });
+
+      if (!(error instanceof Error && error.message === 'Aborted')) {
+        throw error;
+      }
+
+      this.isProcessingInput = false;
+      if (!this.isCurrentlyInterrupted) {
+        this.resetReadline();
+      }
+    } finally {
+      this.currentAbortController = null;
+      if (!this.isCurrentlyInterrupted) {
+        await this.logger.debug('COMPLETION', 'Processing complete', {
+          wasInterrupted: false,
+          bufferSize: this.conversationBuffer.length
+        });
         process.stdout.write("\n");
+        // Reset conversation buffer after processing
+        this.conversationBuffer = [];
+        this.wasInterrupted = false;
+        setImmediate(() => {
+          this.rl.prompt(true);
+        });
       }
-      // After completion, prompt for the next input:
-      this.rl.prompt();
-    } catch (err) {
-      console.error("Error during agent response:", err);
-      this.rl.prompt();
+      if (!this.isCurrentlyInterrupted) {
+        process.stdin.resume();
+        this.rl.prompt(true);
+      }
     }
   }
 
-  // Optional cleanup
   private async cleanup() {
     await this.logger.info('CLEANUP', 'Starting cleanup process', {
       isCurrentlyInterrupted: this.isCurrentlyInterrupted,

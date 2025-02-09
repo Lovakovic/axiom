@@ -1,10 +1,10 @@
 import dotenv from "dotenv";
 import { ChatOpenAI } from "@langchain/openai";
-import { Base } from "../base";
+import { BaseAgent } from "../baseAgent";
 
 dotenv.config();
 
-export class OpenAI extends Base {
+export class OpenAI extends BaseAgent {
   protected getProviderSpecificPrompt(): string {
     return PROMPT;
   }

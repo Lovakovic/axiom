@@ -18,7 +18,7 @@ export const StateAnnotation = Annotation.Root({
   }),
 });
 
-export abstract class Base {
+export abstract class BaseAgent {
   protected mcpClient: MCPClient;
   protected app: any;
   protected model: any;

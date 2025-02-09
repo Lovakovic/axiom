@@ -1,10 +1,10 @@
 import dotenv from "dotenv";
 import { ChatAnthropic } from "@langchain/anthropic";
-import { Base } from "../base";
+import { BaseAgent } from "../baseAgent";
 
 dotenv.config();
 
-export class Anthropic extends Base {
+export class Anthropic extends BaseAgent {
   protected getProviderSpecificPrompt(): string {
     return PROMPT;
   }
