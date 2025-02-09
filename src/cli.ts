@@ -1,7 +1,8 @@
-import { Agent } from "./agent/llm.js";
+#!/usr/bin/env node
 import readline from 'readline';
 import { MCPClient } from "./agent/client";
 import { Logger } from './logger';
+import { AgentManager } from "./agent/manager";  // Using AgentManager for model switching
 
 const YELLOW = '\x1b[33m';
 const BLUE = '\x1b[34m';
@@ -14,7 +15,7 @@ interface ConversationMessage {
 
 export class CLI {
   private readonly threadId: string;
-  private agent!: Agent;
+  private agentManager!: AgentManager;
   private mcpClient!: MCPClient;
   private readonly originalStderr: NodeJS.WriteStream['write'];
   private readonly logger: Logger;
@@ -60,20 +61,23 @@ export class CLI {
   }
 
   public async init() {
-    await this.logger.info('INIT', 'Initializing CLI', {
-      threadId: this.threadId
-    });
-
+    await this.logger.info('INIT', 'Initializing CLI', { threadId: this.threadId });
     await this.logger.info('INIT', 'Starting MCP client initialization');
     this.mcpClient = new MCPClient();
     await this.mcpClient.connect("node", ["dist/server/index.js"]);
-    this.agent = await Agent.init(this.mcpClient);
-    await this.logger.info('INIT', 'MCP client and agent initialized successfully');
+
+    // Initialize AgentManager with both providers
+    this.agentManager = new AgentManager();
+    await this.agentManager.init(this.mcpClient);
+
+    await this.logger.info('INIT', 'MCP client and agent manager initialized successfully');
   }
 
   public async start() {
     this.logger.info('START', 'CLI starting');
     console.log("Agent ready! Press Ctrl+C once to interrupt, twice to do nothing, three times to exit.");
+    console.log(`Current agent: ${this.agentManager.currentAgentKey}`);
+    console.log("To switch models, type: /switch openai  OR  /switch anthropic");
     this.rl.prompt();
   }
 
@@ -95,7 +99,6 @@ export class CLI {
           isCurrentlyInterrupted: this.isCurrentlyInterrupted,
           wasInterrupted: this.wasInterrupted
         };
-
         this.isCurrentlyInterrupted = true;
         this.wasInterrupted = true;
 
@@ -111,6 +114,7 @@ export class CLI {
           clearTimeout(this.ctrlCTimeout);
         }
 
+        // Abort any ongoing requests
         if (this.currentAbortController) {
           this.currentAbortController.abort();
           this.currentAbortController = null;
@@ -162,6 +166,16 @@ export class CLI {
         }
       });
 
+      // Check for model switching command
+      const trimmed = line.trim();
+      if (trimmed.startsWith("/switch ")) {
+        const newAgent = trimmed.substring(8).trim().toLowerCase();
+        const switchMsg = this.agentManager.switchAgent(newAgent);
+        console.log(YELLOW + switchMsg + RESET);
+        this.rl.prompt();
+        return;
+      }
+
       this.inputQueue.push(line);
       await this.logger.debug('QUEUE', 'Input queued', {
         queueLength: this.inputQueue.length,
@@ -190,7 +204,6 @@ export class CLI {
       await this.logger.debug('READLINE', 'Readline interface resumed');
     });
   }
-
 
   private resetReadline() {
     this.logger.debug('READLINE', 'Resetting readline interface', {
@@ -260,9 +273,7 @@ export class CLI {
       },
       bufferState: {
         conversationLength: this.conversationBuffer.length,
-        lastMessageRole: this.conversationBuffer.length > 0
-          ? this.conversationBuffer[this.conversationBuffer.length - 1].role
-          : null
+        lastMessageRole: this.conversationBuffer.length > 0 ? this.conversationBuffer[this.conversationBuffer.length - 1].role : null
       }
     });
 
@@ -273,9 +284,7 @@ export class CLI {
     }
 
     if (!this.rl.terminal) {
-      await this.logger.warn('HANDLE', 'Non-terminal readline detected, resetting', {
-        currentTerminal: this.rl.terminal
-      });
+      await this.logger.warn('HANDLE', 'Non-terminal readline detected, resetting', { currentTerminal: this.rl.terminal });
       this.resetReadline();
       return;
     }
@@ -289,15 +298,13 @@ export class CLI {
 
         this.mcpClient = new MCPClient();
         await this.mcpClient.connect("node", ["dist/server/index.js"]);
-        this.agent = await Agent.init(this.mcpClient);
+        await this.agentManager.init(this.mcpClient);
 
         await this.logger.info('RECONNECT', 'Reconnection successful');
       }
 
-      this.conversationBuffer.push({
-        role: 'human',
-        text: line
-      });
+      // Add human message to conversation buffer
+      this.conversationBuffer.push({ role: 'human', text: line });
 
       process.stdout.write("\nAgent: ");
 
@@ -305,26 +312,44 @@ export class CLI {
 
       await this.logger.debug('PROCESSING', 'Starting response processing', {
         bufferSize: this.conversationBuffer.length,
-        hasAbortController: true
+        hasAbortController: this.currentAbortController !== null
       });
 
-      for await (const event of this.agent.streamResponse(line, this.threadId, {
-        signal: this.currentAbortController.signal,
-        previousBuffer: this.conversationBuffer
-      })) {
+      let toolEventOccurred = false;
+      for await (const event of this.agentManager.activeAgent.streamResponse(
+        line,
+        this.threadId,
+        { signal: this.currentAbortController.signal, previousBuffer: this.conversationBuffer }
+      )) {
         if (this.isCurrentlyInterrupted) {
           await this.logger.info('INTERRUPT', 'Processing interrupted mid-stream', {
             isCurrentlyInterrupted: true,
             wasInterrupted: true
           });
-
           this.isProcessingInput = false;
           process.stdout.write("\n");
           break;
         }
 
         switch (event.type) {
+          case "tool_start": {
+            if(event.tool.name) {
+              process.stdout.write("\n" + BLUE + event.tool.name + ": " + RESET);
+              toolEventOccurred = true;
+            }
+            break;
+          }
+          case "tool_input": {
+            // Append a newline after tool input to separate from subsequent agent output
+            process.stdout.write(BLUE + (event.content || "") + RESET);
+            toolEventOccurred = true;
+            break;
+          }
           case "text": {
+            if (toolEventOccurred) {
+              process.stdout.write("\n");
+              toolEventOccurred = false;
+            }
             process.stdout.write(YELLOW + event.content + RESET);
             const lastMsg = this.conversationBuffer[this.conversationBuffer.length - 1];
             if (!lastMsg || lastMsg.role !== 'ai') {
@@ -332,14 +357,6 @@ export class CLI {
             } else {
               lastMsg.text += event.content || '';
             }
-            break;
-          }
-          case "tool_start": {
-            process.stdout.write("\n" + BLUE + event.tool.name + ": " + RESET);
-            break;
-          }
-          case "tool_input": {
-            process.stdout.write(BLUE + (event.content || "") + RESET);
             break;
           }
         }
@@ -356,34 +373,29 @@ export class CLI {
         }
       });
 
-      // Don't rethrow if it's an AbortError
       if (!(error instanceof Error && error.message === 'Aborted')) {
         throw error;
       }
 
-      // Ensure proper cleanup
       this.isProcessingInput = false;
       if (!this.isCurrentlyInterrupted) {
         this.resetReadline();
       }
     } finally {
       this.currentAbortController = null;
-
       if (!this.isCurrentlyInterrupted) {
         await this.logger.debug('COMPLETION', 'Processing complete', {
           wasInterrupted: false,
           bufferSize: this.conversationBuffer.length
         });
-
         process.stdout.write("\n");
+        // Reset conversation buffer after processing
         this.conversationBuffer = [];
         this.wasInterrupted = false;
-
         setImmediate(() => {
           this.rl.prompt(true);
         });
       }
-
       if (!this.isCurrentlyInterrupted) {
         process.stdin.resume();
         this.rl.prompt(true);
@@ -417,12 +429,11 @@ export class CLI {
   }
 }
 
-// Top-level error handling
 process.on('uncaughtException', async (error) => {
   try {
     const logger = Logger.getInstance();
     await logger.error('UNCAUGHT', 'Uncaught exception in main process', {
-      error: error.stack || String(error)
+      error: error.stack ?? String(error)
     });
   } finally {
     console.error('[ERROR] Uncaught exception:', error);
@@ -444,18 +455,15 @@ process.on('unhandledRejection', async (error) => {
 
 (async () => {
   try {
-    // Initialize the logger first
     const logger = await Logger.init();
     await logger.info('STARTUP', 'Starting main process');
 
     const threadId = Math.random().toString(36).substring(7);
 
-    // Create and initialize CLI with the logger
     const cli = new CLI(threadId, logger);
     await cli.init();
     await cli.start();
   } catch (error) {
-    // Get logger instance for error logging
     const logger = Logger.getInstance();
     await logger.error('STARTUP', 'Error in main process', {
       error: error instanceof Error ? error.stack : String(error)

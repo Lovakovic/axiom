@@ -3,10 +3,10 @@ import {RunnableConfig} from "@langchain/core/runnables";
 import {isCommand, isGraphInterrupt} from "@langchain/langgraph";
 import {StructuredToolInterface} from "@langchain/core/tools";
 import {isLocalTool} from "../local_tools/base";
-import {StateAnnotation} from "../llm";
 import {Logger} from '../../logger';
 import {z} from 'zod';
 import {zodToJsonSchema} from 'zod-to-json-schema';
+import {StateAnnotation} from "../baseAgent";
 
 export type ToolNodeOptions = {
   name?: string;
