@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import readline from 'readline';
-import { MCPClient } from "./agent/client";
+import { MCPClient } from "./agent/mcp.client";
 import { Logger } from './logger';
 import { AgentManager } from "./agent/manager";
 

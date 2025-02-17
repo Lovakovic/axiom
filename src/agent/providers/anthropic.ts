@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import { ChatAnthropic } from "@langchain/anthropic";
-import { BaseAgent } from "../baseAgent";
+import { BaseAgent } from "../base";
 
 dotenv.config();
 

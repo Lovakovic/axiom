@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import { ChatOpenAI } from "@langchain/openai";
-import { BaseAgent } from "../baseAgent";
+import { BaseAgent } from "../base";
 
 dotenv.config();
 

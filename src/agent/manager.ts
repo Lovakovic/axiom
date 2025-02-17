@@ -2,7 +2,7 @@
 
 import { OpenAI } from "./providers/openAI";
 import { Anthropic } from "./providers/anthropic";
-import { MCPClient } from "./client";
+import { MCPClient } from "./mcp.client";
 
 export class AgentManager {
   private agents: { [key: string]: any } = {};
