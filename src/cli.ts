@@ -2,7 +2,7 @@
 import readline from 'readline';
 import { MCPClient } from "./agent/client";
 import { Logger } from './logger';
-import { AgentManager } from "./agent/manager";  // Using AgentManager for model switching
+import { AgentManager } from "./agent/manager";
 
 const YELLOW = '\x1b[33m';
 const BLUE = '\x1b[34m';

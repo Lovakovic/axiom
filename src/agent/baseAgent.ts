@@ -9,7 +9,6 @@ import {Annotation, MemorySaver, messagesStateReducer, StateGraph} from "@langch
 import {createViewImageTool} from "./local_tools/image_tool";
 import {StreamEvent} from "./types";
 import {SystemMessagePromptTemplate} from "@langchain/core/prompts";
-import { StreamLogger } from "../stream-logger";
 import { MessageContentText } from "@langchain/core/dist/messages/base";
 
 dotenv.config();
@@ -124,7 +123,7 @@ export abstract class BaseAgent {
       shell_type: process.env.SHELL ?? "Unknown",
       date_time: new Date().toISOString(),
       architecture: os.arch(),
-      default_editor: process.env.EDITOR || process.env.VISUAL || "Unknown",
+      default_editor: (process.env.EDITOR ?? process.env.VISUAL) ?? "Unknown",
       current_dir: process.cwd(),
       has_tree: (await checkCommand("tree")).toString(),
       has_git: (await checkCommand("git")).toString(),
