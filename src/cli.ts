@@ -332,20 +332,20 @@ export class CLI {
         }
 
         switch (event.type) {
-          case "tool_start": {
+          case 'tool_start': {
             if(event.tool.name) {
               process.stdout.write("\n" + BLUE + event.tool.name + ": " + RESET);
               toolEventOccurred = true;
             }
             break;
           }
-          case "tool_input": {
+          case 'tool_input_delta': {
             // Append a newline after tool input to separate from subsequent agent output
             process.stdout.write(BLUE + (event.content || "") + RESET);
             toolEventOccurred = true;
             break;
           }
-          case "text": {
+          case 'text_delta': {
             if (toolEventOccurred) {
               process.stdout.write("\n");
               toolEventOccurred = false;

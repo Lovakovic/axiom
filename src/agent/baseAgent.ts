@@ -9,6 +9,8 @@ import {Annotation, MemorySaver, messagesStateReducer, StateGraph} from "@langch
 import {createViewImageTool} from "./local_tools/image_tool";
 import {StreamEvent} from "./types";
 import {SystemMessagePromptTemplate} from "@langchain/core/prompts";
+import { StreamLogger } from "../stream-logger";
+import { MessageContentText } from "@langchain/core/dist/messages/base";
 
 dotenv.config();
 
@@ -175,29 +177,56 @@ export abstract class BaseAgent {
         signal: options?.signal,
       }
     )) {
-      if (event.event !== "on_chat_model_stream") continue;
-      const chunk = event.data.chunk as AIMessageChunk;
-      if (chunk.content && Array.isArray(chunk.content)) {
-        for (const contentItem of chunk.content) {
-          if (contentItem.type === "text_delta" && contentItem.text) {
-            yield { type: "text", content: contentItem.text };
+      if (event.event === 'on_chat_model_end') {
+        const message = event.data.output as AIMessageChunk;
+
+        if(Array.isArray(message.content) && message.content.some(isAnthropicTextContent)) {
+          const texts = message.content
+            .map((content) => isAnthropicTextContent(content)
+              ? { type: 'text' as const, content: content.text }
+              : null)
+            .filter((item): item is { type: 'text', content: string } => item !== null);
+
+          if (texts.length > 0) {
+            yield* texts; // Should only be one, but just in case
+          }
+        }
+
+        if(typeof  message.content === 'string' && message.content.trim().length > 0) {
+          yield { type: 'text', content: message.content };
+        }
+
+        if (message.tool_calls && message.tool_calls.length > 0) {
+          for (const toolCall of message.tool_calls) {
+            yield { type: 'tool_call', tool: { ...toolCall, id: toolCall.id ?? 'unknown-tool-id'} };
           }
         }
       }
-      if (chunk.content && typeof chunk.content === "string") {
-        yield { type: "text", content: chunk.content };
+
+      if (event.event !== 'on_chat_model_stream') continue;
+      const chunk = event.data.chunk as AIMessageChunk;
+
+      if (chunk.content && Array.isArray(chunk.content)) {
+        for (const contentItem of chunk.content) {
+          if (contentItem.type === 'text_delta' && contentItem.text) {
+            yield { type: 'text_delta', content: contentItem.text };
+          }
+        }
+      }
+      if (chunk.content && typeof chunk.content === 'string') {
+        yield { type: 'text_delta', content: chunk.content };
       }
       if (chunk.tool_calls && Array.isArray(chunk.tool_calls)) {
         for (const toolCall of chunk.tool_calls) {
-          const toolId = toolCall.id ?? "unknown-tool-id";
+          const toolId = toolCall.id ?? 'unknown-tool-id';
           currentToolId = toolId;
-          yield { type: "tool_start", tool: { name: toolCall.name, id: toolId } };
+          yield { type: 'tool_start', tool: { name: toolCall.name, id: toolId } };
         }
       }
       if (chunk.tool_call_chunks && Array.isArray(chunk.tool_call_chunks)) {
         for (const toolCallChunk of chunk.tool_call_chunks) {
           if (toolCallChunk.args && currentToolId) {
-            yield { type: "tool_input", content: toolCallChunk.args, toolId: currentToolId };
+            yield { type: 'tool_input_delta', content: toolCallChunk.args, toolId: currentToolId };
           }
         }
       }
@@ -205,3 +234,6 @@ export abstract class BaseAgent {
   }
 }
 
+const isAnthropicTextContent = (content: any): content is MessageContentText => {
+  return typeof content === "object" && content.type === "text";
+}
