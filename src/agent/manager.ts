@@ -1,6 +1,6 @@
 "use strict";
 
-import { OpenAI } from "./providers/openAI";
+import { OpenAI } from "./providers/openai";
 import { Anthropic } from "./providers/anthropic";
 import { MCPClient } from "./mcp.client";
 
