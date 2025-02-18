@@ -5,17 +5,21 @@ import {DynamicStructuredTool} from "@langchain/core/tools";
 import {convertJSONSchemaDraft7ToZod} from "../shared/util/draftToZod";
 import {MCPClient} from "./mcp.client";
 import {ToolNode} from "./util/tool-node";
-import {Annotation, MemorySaver, messagesStateReducer, StateGraph} from "@langchain/langgraph";
+import {Annotation, MemorySaver, StateGraph} from "@langchain/langgraph";
 import {createViewImageTool} from "./local_tools/image.tool";
 import {StreamEvent} from "./types";
 import {SystemMessagePromptTemplate} from "@langchain/core/prompts";
-import { MessageContentText } from "@langchain/core/dist/messages/base";
+import {MessageContentText} from "@langchain/core/dist/messages/base";
 
 dotenv.config();
 
+const messageReducer = (state: BaseMessage[], message: BaseMessage[]) => {
+  return [...state, ...message];
+}
+
 export const StateAnnotation = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
-    reducer: messagesStateReducer,
+    reducer: messageReducer,
   }),
 });
 
@@ -72,7 +76,7 @@ export abstract class BaseAgent {
       const messages = state.messages;
       const lastMessage = messages[messages.length - 1] as BaseMessage | undefined;
 
-      if (lastMessage?.getType() === "ai" && ((lastMessage as any)?.tool_calls?.length ?? 0) > 0) {
+      if (lastMessage?.getType() === "ai" && ((lastMessage as AIMessage)?.tool_calls?.length ?? 0) > 0) {
         (lastMessage as any).tool_calls = [];
       }
 
