@@ -1,20 +1,14 @@
 #!/usr/bin/env node
 import readline from 'readline';
-import { MCPClient } from "./agent/mcp.client";
-import { Logger } from './logger';
-import { AgentManager } from "./agent/manager";
+import {MCPClient} from "./agent/mcp.client";
+import {Logger} from './logger';
+import {AgentManager} from "./agent/manager";
 
 const YELLOW = '\x1b[33m';
 const BLUE = '\x1b[34m';
 const RESET = '\x1b[0m';
 
-interface ConversationMessage {
-  role: 'human' | 'ai';
-  text: string;
-}
-
 export class CLI {
-  private readonly threadId: string;
   private agentManager!: AgentManager;
   private mcpClient!: MCPClient;
   private readonly originalStderr: NodeJS.WriteStream['write'];
@@ -29,11 +23,9 @@ export class CLI {
   private readonly inputQueue: string[] = [];
   private currentAbortController: AbortController | null = null;
 
-  private conversationBuffer: ConversationMessage[] = [];
   private rl: readline.Interface;
 
-  constructor(threadId: string, logger: Logger) {
-    this.threadId = threadId;
+  constructor(logger: Logger) {
     this.logger = logger;
 
     this.rl = readline.createInterface({
@@ -61,7 +53,6 @@ export class CLI {
   }
 
   public async init() {
-    await this.logger.info('INIT', 'Initializing CLI', { threadId: this.threadId });
     await this.logger.info('INIT', 'Starting MCP client initialization');
     this.mcpClient = new MCPClient();
     await this.mcpClient.connect("node", ["dist/server/index.js"]);
@@ -264,19 +255,6 @@ export class CLI {
   }
 
   private async handleLine(line: string) {
-    await this.logger.debug('HANDLE', 'Starting line handling', {
-      lineLength: line.length,
-      readlineState: {
-        terminal: this.rl.terminal,
-        prompt: this.rl.getPrompt(),
-        closed: (this.rl as any).closed
-      },
-      bufferState: {
-        conversationLength: this.conversationBuffer.length,
-        lastMessageRole: this.conversationBuffer.length > 0 ? this.conversationBuffer[this.conversationBuffer.length - 1].role : null
-      }
-    });
-
     if (!line.trim()) {
       await this.logger.debug('HANDLE', 'Empty line received');
       this.rl.prompt();
@@ -303,23 +281,14 @@ export class CLI {
         await this.logger.info('RECONNECT', 'Reconnection successful');
       }
 
-      // Add human message to conversation buffer
-      this.conversationBuffer.push({ role: 'human', text: line });
-
       process.stdout.write("\nAgent: ");
 
       this.currentAbortController = new AbortController();
 
-      await this.logger.debug('PROCESSING', 'Starting response processing', {
-        bufferSize: this.conversationBuffer.length,
-        hasAbortController: this.currentAbortController !== null
-      });
-
       let toolEventOccurred = false;
       for await (const event of this.agentManager.activeAgent.streamResponse(
         line,
-        this.threadId,
-        { signal: this.currentAbortController.signal, previousBuffer: this.conversationBuffer }
+        { signal: this.currentAbortController.signal }
       )) {
         if (this.isCurrentlyInterrupted) {
           await this.logger.info('INTERRUPT', 'Processing interrupted mid-stream', {
@@ -351,12 +320,6 @@ export class CLI {
               toolEventOccurred = false;
             }
             process.stdout.write(YELLOW + event.content + RESET);
-            const lastMsg = this.conversationBuffer[this.conversationBuffer.length - 1];
-            if (!lastMsg || lastMsg.role !== 'ai') {
-              this.conversationBuffer.push({ role: 'ai', text: event.content || '' });
-            } else {
-              lastMsg.text += event.content || '';
-            }
             break;
           }
         }
@@ -386,11 +349,8 @@ export class CLI {
       if (!this.isCurrentlyInterrupted) {
         await this.logger.debug('COMPLETION', 'Processing complete', {
           wasInterrupted: false,
-          bufferSize: this.conversationBuffer.length
         });
         process.stdout.write("\n");
-        // Reset conversation buffer after processing
-        this.conversationBuffer = [];
         this.wasInterrupted = false;
         setImmediate(() => {
           this.rl.prompt(true);
@@ -458,9 +418,7 @@ process.on('unhandledRejection', async (error) => {
     const logger = await Logger.init();
     await logger.info('STARTUP', 'Starting main process');
 
-    const threadId = Math.random().toString(36).substring(7);
-
-    const cli = new CLI(threadId, logger);
+    const cli = new CLI(logger);
     await cli.init();
     await cli.start();
   } catch (error) {

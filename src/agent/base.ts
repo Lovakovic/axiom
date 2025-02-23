@@ -5,21 +5,18 @@ import {DynamicStructuredTool} from "@langchain/core/tools";
 import {convertJSONSchemaDraft7ToZod} from "../shared/util/draftToZod";
 import {MCPClient} from "./mcp.client";
 import {ToolNode} from "./util/tool-node";
-import {Annotation, MemorySaver, StateGraph} from "@langchain/langgraph";
+import {Annotation, messagesStateReducer, StateGraph} from "@langchain/langgraph";
 import {createViewImageTool} from "./local_tools/image.tool";
-import {StreamEvent} from "./types";
+import {MessageEvent, StreamEvent, TextStreamEvent, ToolEvent, ToolInputEvent, ToolStartEvent} from "./types";
 import {SystemMessagePromptTemplate} from "@langchain/core/prompts";
 import {MessageContentText} from "@langchain/core/dist/messages/base";
+import {ConversationState} from "./state/conversation.state";
 
 dotenv.config();
 
-const messageReducer = (state: BaseMessage[], message: BaseMessage[]) => {
-  return [...state, ...message];
-}
-
 export const StateAnnotation = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
-    reducer: messageReducer,
+    reducer: messagesStateReducer,
   }),
 });
 
@@ -71,7 +68,7 @@ export abstract class BaseAgent {
   }
 
   // Build the workflow (state graph) using common logic.
-  protected buildWorkflow(systemMessage: SystemMessage, toolNode: any, allTools: any[]): any {
+  protected buildWorkflow(systemMessage: SystemMessage, toolNode: ToolNode, allTools: any[]): any {
     const callModel = async (state: typeof StateAnnotation.State) => {
       const messages = state.messages;
       const lastMessage = messages[messages.length - 1] as BaseMessage | undefined;
@@ -85,8 +82,15 @@ export abstract class BaseAgent {
       });
 
       const response = await this.model.invoke([systemMessage, ...filteredMessages]);
+      ConversationState.getInstance().addMessage(response);
       return { messages: [response] };
     };
+
+    const callTools = async (state: typeof StateAnnotation.State) => {
+      const results = await toolNode.invoke(state);
+      ConversationState.getInstance().addMessages(results.messages);
+      return { messages: results.messages };
+    }
 
     const shouldContinue = (state: typeof StateAnnotation.State) => {
       const messages = state.messages;
@@ -99,13 +103,12 @@ export abstract class BaseAgent {
 
     const workflow = new StateGraph(StateAnnotation)
       .addNode("agent", callModel)
-      .addNode("tools", toolNode.invoke)
+      .addNode("tools", callTools)
       .addEdge("__start__", "agent")
       .addConditionalEdges("agent", shouldContinue)
       .addEdge("tools", "agent");
 
-    const checkpointer = new MemorySaver();
-    return workflow.compile({checkpointer});
+    return workflow.compile();
   }
 
   protected async getBasePromptData(mcpClient: MCPClient): Promise<Record<string, string>> {
@@ -161,26 +164,28 @@ export abstract class BaseAgent {
   // StreamResponse implementation common to both agents.
   public async *streamResponse(
     input: string,
-    threadId: string,
     options?: { signal?: AbortSignal; previousBuffer?: { role: "human" | "ai"; text: string }[] }
   ): AsyncGenerator<StreamEvent> {
+    const convState = ConversationState.getInstance();
+
+    // First get the messages from the conversation state - this will finalize buffers
+    const messages = convState.getMessages();
+
+    // Then add the human input as a complete message.
+    convState.addMessage(new HumanMessage({ content: input }));
+
     let currentToolId = "";
-    const messages = options?.previousBuffer
-      ? options.previousBuffer.map((message) =>
-        message.role === "ai" ? new AIMessage(message.text) : new HumanMessage(message.text)
-      )
-      : [new HumanMessage(input)];
 
     for await (const event of this.app.streamEvents(
       { messages },
       {
-        configurable: { thread_id: threadId },
         version: "v2",
-        recursionLimit: 75,
+        recursionLimit: 100,
         signal: options?.signal,
       }
     )) {
       if (event.event === 'on_chat_model_end') {
+        convState.clearBuffers();
         const message = event.data.output as AIMessageChunk;
 
         if(Array.isArray(message.content) && message.content.some(isAnthropicTextContent)) {
@@ -191,17 +196,17 @@ export abstract class BaseAgent {
             .filter((item): item is { type: 'text', content: string } => item !== null);
 
           if (texts.length > 0) {
-            yield* texts; // Should only be one, but just in case
+            yield* texts as MessageEvent[]; // Should only be one, but just in case
           }
         }
 
         if(typeof  message.content === 'string' && message.content.trim().length > 0) {
-          yield { type: 'text', content: message.content };
+          yield { type: 'text', content: message.content } as MessageEvent;
         }
 
         if (message.tool_calls && message.tool_calls.length > 0) {
           for (const toolCall of message.tool_calls) {
-            yield { type: 'tool_call', tool: { ...toolCall, id: toolCall.id ?? 'unknown-tool-id'} };
+            yield { type: 'tool_call', tool: { ...toolCall, id: toolCall.id ?? 'unknown-tool-id'} } as ToolEvent;
           }
         }
       }
@@ -212,24 +217,28 @@ export abstract class BaseAgent {
       if (chunk.content && Array.isArray(chunk.content)) {
         for (const contentItem of chunk.content) {
           if (contentItem.type === 'text_delta' && contentItem.text) {
-            yield { type: 'text_delta', content: contentItem.text };
+            convState.addTextDelta(contentItem.text);
+            yield { type: 'text_delta', content: contentItem.text } as TextStreamEvent;
           }
         }
       }
       if (chunk.content && typeof chunk.content === 'string') {
-        yield { type: 'text_delta', content: chunk.content };
+        convState.addTextDelta(chunk.content);
+        yield { type: 'text_delta', content: chunk.content } as TextStreamEvent;
       }
       if (chunk.tool_calls && Array.isArray(chunk.tool_calls)) {
         for (const toolCall of chunk.tool_calls) {
           const toolId = toolCall.id ?? 'unknown-tool-id';
           currentToolId = toolId;
-          yield { type: 'tool_start', tool: { name: toolCall.name, id: toolId } };
+          convState.addToolCallDelta(toolCall.name + ': ');
+          yield { type: 'tool_start', tool: { name: toolCall.name, id: toolId } } as ToolStartEvent;
         }
       }
       if (chunk.tool_call_chunks && Array.isArray(chunk.tool_call_chunks)) {
         for (const toolCallChunk of chunk.tool_call_chunks) {
           if (toolCallChunk.args && currentToolId) {
-            yield { type: 'tool_input_delta', content: toolCallChunk.args, toolId: currentToolId };
+            convState.addToolCallDelta(toolCallChunk.args);
+            yield { type: 'tool_input_delta', content: toolCallChunk.args, toolId: currentToolId } as ToolInputEvent;
           }
         }
       }

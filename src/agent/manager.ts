@@ -6,7 +6,7 @@ import { MCPClient } from "./mcp.client";
 
 export class AgentManager {
   private agents: { [key: string]: any } = {};
-  private activeAgentKey: string = "openai";
+  private activeAgentKey: string = "anthropic";
 
   // Initialize both agent providers
   async init(mcpClient: MCPClient): Promise<void> {
