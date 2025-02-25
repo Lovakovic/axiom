@@ -19,11 +19,13 @@ export class CLI {
   private isCurrentlyInterrupted = false;
   private wasInterrupted = false;
   private isProcessingInput = false;
+  private isReconnecting = false;
 
   private readonly inputQueue: string[] = [];
   private currentAbortController: AbortController | null = null;
 
   private rl: readline.Interface;
+  private serverProcess: import('child_process').ChildProcess | null = null;
 
   constructor(logger: Logger) {
     this.logger = logger;
@@ -54,6 +56,29 @@ export class CLI {
 
   public async init() {
     await this.logger.info('INIT', 'Starting MCP client initialization');
+
+    // Start the server as a detached process to prevent SIGINT propagation
+    const { spawn } = require('child_process');
+    this.serverProcess = spawn('node', ['dist/server/index.js'], {
+      detached: true, // This prevents SIGINT propagation
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    // Log server process events
+    this.serverProcess?.on('error', async (err) => {
+      await this.logger.error('SERVER', 'Server process error', { error: err.message });
+    });
+
+    this.serverProcess?.on('exit', async (code) => {
+      await this.logger.info('SERVER', 'Server process exited', { code });
+      // If server exits unexpectedly and we're not shutting down, restart it
+      if (code !== 0 && !this.isCurrentlyInterrupted) {
+        await this.logger.info('SERVER', 'Attempting to restart server process');
+        await this.restartServer();
+      }
+    });
+
+    // Initialize the MCP client with the server process
     this.mcpClient = new MCPClient();
     await this.mcpClient.connect("node", ["dist/server/index.js"]);
 
@@ -72,6 +97,68 @@ export class CLI {
     this.rl.prompt();
   }
 
+  // New method to restart the server if it crashes
+  private async restartServer() {
+    const { spawn } = require('child_process');
+    this.serverProcess = spawn('node', ['dist/server/index.js'], {
+      detached: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    // Wait briefly to let the server start up
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Reconnect the client
+    await this.reconnect();
+  }
+
+  // New method to handle reconnection logic
+  private async reconnect() {
+    this.isReconnecting = true;
+    await this.logger.info('RECONNECT', 'Beginning reconnection process', {
+      wasInterrupted: this.wasInterrupted,
+      isCurrentlyInterrupted: this.isCurrentlyInterrupted
+    });
+
+    try {
+      // Disconnect existing client if needed
+      if (this.mcpClient) {
+        try {
+          await this.mcpClient.disconnect();
+        } catch (error) {
+          await this.logger.warn('RECONNECT', 'Error disconnecting old client', {
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
+      // Create new client and reconnect
+      this.mcpClient = new MCPClient();
+      await this.mcpClient.connect("node", ["dist/server/index.js"]);
+      await this.agentManager.init(this.mcpClient);
+
+      await this.logger.info('RECONNECT', 'Reconnection successful');
+
+      // Reset flags after successful reconnection
+      this.wasInterrupted = false;
+    } catch (error) {
+      await this.logger.error('RECONNECT', 'Reconnection failed', {
+        error: error instanceof Error ? error.stack : String(error)
+      });
+
+      // Set a timeout to retry reconnection
+      setTimeout(() => this.reconnect(), 2000);
+      return;
+    } finally {
+      this.isReconnecting = false;
+      // Re-enable input processing
+      this.isCurrentlyInterrupted = false;
+
+      // Prompt for new input
+      this.rl.prompt();
+    }
+  }
+
   private handleSignals() {
     process.on('SIGINT', async () => {
       this.ctrlCCount++;
@@ -81,7 +168,8 @@ export class CLI {
         currentFlags: {
           isCurrentlyInterrupted: this.isCurrentlyInterrupted,
           wasInterrupted: this.wasInterrupted,
-          isProcessingInput: this.isProcessingInput
+          isProcessingInput: this.isProcessingInput,
+          isReconnecting: this.isReconnecting
         }
       });
 
@@ -131,6 +219,11 @@ export class CLI {
 
         process.stdout.write("\n");
         this.resetReadline();
+
+        // Start reconnection process if needed
+        if (!this.isReconnecting) {
+          setImmediate(() => this.reconnect());
+        }
 
       } else if (this.ctrlCCount === 3) {
         await this.logger.info('SHUTDOWN', 'Third interrupt - initiating shutdown');
@@ -227,11 +320,19 @@ export class CLI {
   }
 
   private async processNextInput() {
-    if (this.inputQueue.length === 0 || this.isProcessingInput) {
+    // Don't process inputs during reconnection
+    if (this.inputQueue.length === 0 || this.isProcessingInput || this.isReconnecting) {
       await this.logger.debug('QUEUE', 'Skipping input processing', {
         queueLength: this.inputQueue.length,
-        isProcessingInput: this.isProcessingInput
+        isProcessingInput: this.isProcessingInput,
+        isReconnecting: this.isReconnecting
       });
+
+      // If we're reconnecting, inform the user
+      if (this.isReconnecting && this.inputQueue.length > 0) {
+        process.stdout.write("\nPlease wait, reconnecting to server...\n");
+      }
+
       return;
     }
 
@@ -268,18 +369,9 @@ export class CLI {
     }
 
     try {
-      if (this.wasInterrupted) {
-        await this.logger.info('RECONNECT', 'Reconnecting after interruption', {
-          wasInterrupted: true,
-          isCurrentlyInterrupted: this.isCurrentlyInterrupted
-        });
-
-        this.mcpClient = new MCPClient();
-        await this.mcpClient.connect("node", ["dist/server/index.js"]);
-        await this.agentManager.init(this.mcpClient);
-
-        await this.logger.info('RECONNECT', 'Reconnection successful');
-      }
+      // We handle reconnection in the dedicated reconnect method now,
+      // so we don't need to check wasInterrupted here anymore.
+      // The reconnection will happen automatically after interruption.
 
       process.stdout.write("\nAgent: ");
 
@@ -332,31 +424,43 @@ export class CLI {
           isInterrupted: this.isCurrentlyInterrupted,
           wasInterrupted: this.wasInterrupted,
           isProcessing: this.isProcessingInput,
+          isReconnecting: this.isReconnecting,
           queueLength: this.inputQueue.length
         }
       });
 
       if (!(error instanceof Error && error.message === 'Aborted')) {
-        throw error;
+        // If it's a connection error, try to reconnect
+        if (error instanceof Error &&
+          (error.message.includes('Connection closed') ||
+            error.message.includes('connection') ||
+            error.message.includes('ECONNREFUSED'))) {
+          await this.logger.info('HANDLE', 'Connection error detected, triggering reconnection');
+          if (!this.isReconnecting) {
+            setImmediate(() => this.reconnect());
+          }
+        } else {
+          throw error;
+        }
       }
 
       this.isProcessingInput = false;
-      if (!this.isCurrentlyInterrupted) {
+      if (!this.isCurrentlyInterrupted && !this.isReconnecting) {
         this.resetReadline();
       }
     } finally {
       this.currentAbortController = null;
-      if (!this.isCurrentlyInterrupted) {
+      if (!this.isCurrentlyInterrupted && !this.isReconnecting) {
         await this.logger.debug('COMPLETION', 'Processing complete', {
           wasInterrupted: false,
+          isReconnecting: false
         });
         process.stdout.write("\n");
-        this.wasInterrupted = false;
         setImmediate(() => {
           this.rl.prompt(true);
         });
       }
-      if (!this.isCurrentlyInterrupted) {
+      if (!this.isCurrentlyInterrupted && !this.isReconnecting) {
         process.stdin.resume();
         this.rl.prompt(true);
       }
@@ -367,7 +471,8 @@ export class CLI {
     await this.logger.info('CLEANUP', 'Starting cleanup process', {
       isCurrentlyInterrupted: this.isCurrentlyInterrupted,
       wasInterrupted: this.wasInterrupted,
-      isProcessingInput: this.isProcessingInput
+      isProcessingInput: this.isProcessingInput,
+      isReconnecting: this.isReconnecting
     });
 
     process.stderr.write = this.originalStderr;
@@ -381,6 +486,21 @@ export class CLI {
           error: error instanceof Error ? error.stack : String(error)
         });
         console.error('Error during MCP client cleanup:', error);
+      }
+    }
+
+    // Clean shutdown of the server process
+    if (this.serverProcess) {
+      try {
+        // Try to gracefully terminate the server process
+        if (this.serverProcess.pid) {
+          process.kill(this.serverProcess.pid, 'SIGTERM');
+          await this.logger.info('CLEANUP', 'Server process terminated gracefully');
+        }
+      } catch (error) {
+        await this.logger.error('CLEANUP', 'Error terminating server process', {
+          error: error instanceof Error ? error.stack : String(error)
+        });
       }
     }
 

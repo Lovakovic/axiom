@@ -74,13 +74,21 @@ export abstract class BaseAgent {
       const lastMessage = messages[messages.length - 1] as BaseMessage | undefined;
 
       if (lastMessage?.getType() === "ai" && ((lastMessage as AIMessage)?.tool_calls?.length ?? 0) > 0) {
-        (lastMessage as any).tool_calls = [];
+        const lastAiMessage = lastMessage as AIMessage;
+        lastAiMessage.tool_calls = [];
+
+        if(Array.isArray(lastMessage.content)) {
+          lastAiMessage.content = lastMessage.content.filter((content) => {
+            return content.type === "text";
+          });
+        }
       }
 
       const filteredMessages = messages.filter((message) => {
         return typeof message.content === "string" || message.content.length > 0;
       });
 
+      console.log("Filtered messages:", filteredMessages);
       const response = await this.model.invoke([systemMessage, ...filteredMessages]);
       ConversationState.getInstance().addMessage(response);
       return { messages: [response] };
