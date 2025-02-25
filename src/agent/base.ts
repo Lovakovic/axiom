@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 import os from "os";
 import {AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage} from "@langchain/core/messages";
-import {DynamicStructuredTool} from "@langchain/core/tools";
+import {DynamicStructuredTool, StructuredToolInterface} from "@langchain/core/tools";
 import {convertJSONSchemaDraft7ToZod} from "../shared/util/draftToZod";
 import {MCPClient} from "./mcp.client";
 import {ToolNode} from "./util/tool-node";
@@ -11,6 +11,7 @@ import {MessageEvent, StreamEvent, TextStreamEvent, ToolEvent, ToolInputEvent, T
 import {SystemMessagePromptTemplate} from "@langchain/core/prompts";
 import {MessageContentText} from "@langchain/core/dist/messages/base";
 import {ConversationState} from "./state/conversation.state";
+import {BaseChatModel} from "@langchain/core/dist/language_models/chat_models";
 
 dotenv.config();
 
@@ -32,7 +33,7 @@ export abstract class BaseAgent {
   }
 
   // Subclasses must implement these methods to provide a unique system message and model configuration.
-  protected abstract createModel(allTools: any[]): any;
+  protected abstract createModel(allTools: StructuredToolInterface[]): BaseChatModel;
 
   // Common setup: get MCP tools, wrap them, create local tools, combine and form a tool node.
   protected async commonSetup(): Promise<{ allTools: any[]; systemMessage: SystemMessage; toolNode: any }> {
@@ -81,6 +82,7 @@ export abstract class BaseAgent {
         return typeof message.content === "string" || message.content.length > 0;
       });
 
+      // console.log('Calling model with messages', filteredMessages);
       const response = await this.model.invoke([systemMessage, ...filteredMessages]);
       ConversationState.getInstance().addMessage(response);
       return { messages: [response] };

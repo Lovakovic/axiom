@@ -1,6 +1,8 @@
 import dotenv from "dotenv";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { BaseAgent } from "../base";
+import {StructuredToolInterface} from "@langchain/core/tools";
+import {BaseChatModel} from "@langchain/core/dist/language_models/chat_models";
 
 dotenv.config();
 
@@ -9,13 +11,13 @@ export class Anthropic extends BaseAgent {
     return PROMPT;
   }
 
-  protected createModel(allTools: any[]): any {
+  protected createModel(allTools: StructuredToolInterface[]): BaseChatModel {
     return new ChatAnthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
-      model: "claude-3-5-sonnet-20241022",
-      temperature: 0,
+      model: "claude-3-7-sonnet-20250219",
+      temperature: 0.4,
       streaming: true,
-    }).bindTools(allTools);
+    }).bindTools(allTools) as BaseChatModel;
   }
 
   public static async init(mcpClient: any): Promise<Anthropic> {
@@ -40,5 +42,8 @@ IMPORTANT SAFETY GUIDELINES:
    - Delete important files or directories
    - Modify system settings without explicit permission
    - Consume excessive system resources
+   
+When reading files such as code files, text files, markdown and similar, read the entire file. 
+For non-text files make sure you use the appropriate tool to read the file. 
 
 Please help the user while keeping their system safe.`;

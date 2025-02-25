@@ -1,6 +1,8 @@
 import dotenv from "dotenv";
 import { ChatOpenAI } from "@langchain/openai";
 import { BaseAgent } from "../base";
+import {BaseChatModel} from "@langchain/core/dist/language_models/chat_models";
+import {StructuredToolInterface} from "@langchain/core/tools";
 
 dotenv.config();
 
@@ -9,12 +11,12 @@ export class OpenAI extends BaseAgent {
     return PROMPT;
   }
 
-  protected createModel(allTools: any[]): any {
+  protected createModel(allTools: StructuredToolInterface[]): BaseChatModel {
     return new ChatOpenAI({
       apiKey: process.env.OPENAI_API_KEY,
       model: "o3-mini",
       streaming: true,
-    }).bindTools(allTools);
+    }).bindTools(allTools) as BaseChatModel;
   }
 
   public static async init(mcpClient: any): Promise<OpenAI> {
