@@ -88,7 +88,6 @@ export abstract class BaseAgent {
         return typeof message.content === "string" || message.content.length > 0;
       });
 
-      console.log("Filtered messages:", filteredMessages);
       const response = await this.model.invoke([systemMessage, ...filteredMessages]);
       ConversationState.getInstance().addMessage(response);
       return { messages: [response] };

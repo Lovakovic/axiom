@@ -55,10 +55,10 @@
     zod "^3.22.4"
     zod-to-json-schema "^3.22.4"
 
-"@langchain/core@^0.3.30", "@langchain/core@>=0.2.21 <0.4.0", "@langchain/core@>=0.2.31 <0.4.0", "@langchain/core@>=0.2.36 <0.3.0 || >=0.3.9 < 0.4.0", "@langchain/core@>=0.3.29 <0.4.0":
-  version "0.3.32"
-  resolved "https://registry.npmjs.org/@langchain/core/-/core-0.3.32.tgz"
-  integrity sha512-QesrB7qPrvdIKgCL6/hfa1e7+5dCCgunN5nRGvr0LYWEVuLBrUd93PDvpPP9Fk43+HZnS16adTCYOwX0Jad5Bw==
+"@langchain/core@^0.3.30", "@langchain/core@>=0.2.21 <0.4.0", "@langchain/core@>=0.2.31 <0.4.0", "@langchain/core@>=0.2.36 <0.3.0 || >=0.3.40 < 0.4.0", "@langchain/core@>=0.3.29 <0.4.0":
+  version "0.3.41"
+  resolved "https://registry.npmjs.org/@langchain/core/-/core-0.3.41.tgz"
+  integrity sha512-e/vOyfBxH6Wf2iWvQTecfnkTLGyy6QMTjHgRdU89d3+cHHnNURRCjFbq0dOLWqxnW3eWbXkmNhf3MauRDM+zbQ==
   dependencies:
     "@cfworker/json-schema" "^4.0.2"
     ansi-styles "^5.0.0"
@@ -73,10 +73,10 @@
     zod "^3.22.4"
     zod-to-json-schema "^3.22.3"
 
-"@langchain/langgraph-checkpoint@~0.0.13":
-  version "0.0.13"
-  resolved "https://registry.npmjs.org/@langchain/langgraph-checkpoint/-/langgraph-checkpoint-0.0.13.tgz"
-  integrity sha512-amdmBcNT8a9xP2VwcEWxqArng4gtRDcnVyVI4DsQIo1Aaz8e8+hH17zSwrUF3pt1pIYztngIfYnBOim31mtKMg==
+"@langchain/langgraph-checkpoint@~0.0.15":
+  version "0.0.15"
+  resolved "https://registry.npmjs.org/@langchain/langgraph-checkpoint/-/langgraph-checkpoint-0.0.15.tgz"
+  integrity sha512-AiJkvsYHqNbCh1Tx823qs2lf2qRqeB4EAMejirOk8gkpPszAGYua5c3niKYkcKR2tU8Snhrmj7Gm9HKZSFOXyw==
   dependencies:
     uuid "^10.0.0"
 
@@ -90,12 +90,12 @@
     p-retry "4"
     uuid "^9.0.0"
 
-"@langchain/langgraph@^0.2.40":
-  version "0.2.41"
-  resolved "https://registry.npmjs.org/@langchain/langgraph/-/langgraph-0.2.41.tgz"
-  integrity sha512-NeNizWP4k9voEwJxuFtfopF02Lx1isuEsdZKYCN3ueJpOnkVg0iGx8woPBsQpYcrWcySkIt3zOkgtUsrNHqo3g==
+"@langchain/langgraph@^0.2.49":
+  version "0.2.49"
+  resolved "https://registry.npmjs.org/@langchain/langgraph/-/langgraph-0.2.49.tgz"
+  integrity sha512-CI8M8gz5bp6z1EcrcbKfHzZRGGHF8vYjih6vQTW7t3FEQAYzrLdpE4c7tw/jr7n2/9rb/bUkM7CL9pswUDoZfQ==
   dependencies:
-    "@langchain/langgraph-checkpoint" "~0.0.13"
+    "@langchain/langgraph-checkpoint" "~0.0.15"
     "@langchain/langgraph-sdk" "~0.0.32"
     uuid "^10.0.0"
     zod "^3.23.8"
