@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import readline from 'readline';
 import {MCPClient} from "./agent/mcp.client";
-import {Logger} from './logger';
+import {ILogger, Logger} from './logger';
 import {AgentManager} from "./agent/manager";
 
 const YELLOW = '\x1b[33m';
@@ -12,7 +12,7 @@ export class CLI {
   private agentManager!: AgentManager;
   private mcpClient!: MCPClient;
   private readonly originalStderr: NodeJS.WriteStream['write'];
-  private readonly logger: Logger;
+  private readonly logger: ILogger;
 
   private ctrlCCount = 0;
   private ctrlCTimeout: NodeJS.Timeout | null = null;
@@ -27,7 +27,7 @@ export class CLI {
   private rl: readline.Interface;
   private serverProcess: import('child_process').ChildProcess | null = null;
 
-  constructor(logger: Logger) {
+  constructor(logger: ILogger) {
     this.logger = logger;
 
     this.rl = readline.createInterface({
