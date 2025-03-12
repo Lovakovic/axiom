@@ -5,7 +5,8 @@ describe('CLI Input Processing', () => {
 
   beforeEach(() => {
     harness = new CLITestHarness();
-    jest.spyOn(harness.cli, 'processNextInput').mockImplementation(() => Promise.resolve());
+    // Don't mock processNextInput - we want to test the actual queueing behavior
+    // jest.spyOn(harness.cli, 'processNextInput').mockImplementation(() => Promise.resolve());
   });
 
   afterEach(() => {
@@ -13,17 +14,36 @@ describe('CLI Input Processing', () => {
     jest.restoreAllMocks();
   });
 
-  test('should queue user input', () => {
+  test('should queue user input', async () => {
+    // Spy on the queue push operation to verify it happens
+    const queueSpy = jest.spyOn(harness.cli.inputQueue, 'push');
+
     harness.sendInput('hello world');
-    expect(harness.cli.inputQueue).toContain('hello world');
+
+    // Wait for the next tick to allow the event handler to run
+    await new Promise(resolve => setImmediate(resolve));
+
+    // Verify the input was pushed to the queue
+    expect(queueSpy).toHaveBeenCalledWith('hello world');
   });
 
-  test('should handle agent switching command', () => {
-    jest.spyOn(harness.mockAgentManager, 'switchAgent');
+  test('should handle agent switching command', async () => {
+    // Make sure we're using the mock agent manager
+    harness.cli.agentManager = harness.mockAgentManager;
 
+    // Create the spy after ensuring we're using the right instance
+    const switchSpy = jest.spyOn(harness.mockAgentManager, 'switchAgent');
+
+    // Send the command
     harness.sendInput('/switch openai');
 
-    expect(harness.mockAgentManager.switchAgent).toHaveBeenCalledWith('openai');
+    // Wait for the event handler to process the command
+    await new Promise(resolve => setImmediate(resolve));
+
+    // Verify the switch was called
+    expect(switchSpy).toHaveBeenCalledWith('openai');
+
+    // Command should not be added to the input queue
     expect(harness.cli.inputQueue).not.toContain('/switch openai');
   });
 

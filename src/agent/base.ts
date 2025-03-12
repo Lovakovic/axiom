@@ -223,7 +223,7 @@ export abstract class BaseAgent {
 
       if (chunk.content && Array.isArray(chunk.content)) {
         for (const contentItem of chunk.content) {
-          if (contentItem.type === 'text_delta' && contentItem.text) {
+          if (contentItem.type === 'text' && contentItem.text) {
             convState.addTextDelta(contentItem.text);
             yield { type: 'text_delta', content: contentItem.text } as TextStreamEvent;
           }

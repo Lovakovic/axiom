@@ -16,11 +16,31 @@ describe('CLI Initialization', () => {
     expect(harness.cli.rl.terminal).toBe(true);
   });
 
-  test('should setup signal handlers', () => {
+  test('should setup signal handlers', async () => {
     expect(harness.cli.ctrlCCount).toBe(0);
     expect(harness.cli.isCurrentlyInterrupted).toBe(false);
 
+    // Spy on the logger method that gets called when interrupt is processed
+    const loggerSpy = jest.spyOn(harness.mockLogger, 'info');
+
     harness.sendCtrlC();
+
+    // Wait for the specific log message that indicates interrupt processing is complete
+    await new Promise<void>(resolve => {
+      const checkLogs = () => {
+        const interruptLogs = loggerSpy.mock.calls.filter(
+          call => call[0] === 'INTERRUPT' && call[1] === 'First interrupt - updating flags'
+        );
+
+        if (interruptLogs.length > 0) {
+          resolve();
+        } else {
+          setTimeout(checkLogs, 10);
+        }
+      };
+      checkLogs();
+    });
+
     expect(harness.cli.ctrlCCount).toBe(1);
     expect(harness.cli.isCurrentlyInterrupted).toBe(true);
   });

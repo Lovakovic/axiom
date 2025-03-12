@@ -35,7 +35,7 @@ class MockProcess extends EventEmitter {
 
   // Send SIGINT signal
   sendSigInt() {
-    this.emit('SIGINT');
+    process.emit('SIGINT');
   }
 }
 
