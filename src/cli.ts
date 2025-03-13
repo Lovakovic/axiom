@@ -533,20 +533,22 @@ process.on('unhandledRejection', async (error) => {
   }
 });
 
-(async () => {
-  try {
-    const logger = await Logger.init();
-    await logger.info('STARTUP', 'Starting main process');
+if (require.main === module) {
+  (async () => {
+    try {
+      const logger = await Logger.init();
+      await logger.info('STARTUP', 'Starting main process');
 
-    const cli = new CLI(logger);
-    await cli.init();
-    await cli.start();
-  } catch (error) {
-    const logger = Logger.getInstance();
-    await logger.error('STARTUP', 'Error in main process', {
-      error: error instanceof Error ? error.stack : String(error)
-    });
-    console.error('[ERROR] Main process error:', error);
-    process.exit(1);
-  }
-})();
+      const cli = new CLI(logger);
+      await cli.init();
+      await cli.start();
+    } catch (error) {
+      const logger = Logger.getInstance();
+      await logger.error('STARTUP', 'Error in main process', {
+        error: error instanceof Error ? error.stack : String(error)
+      });
+      console.error('[ERROR] Main process error:', error);
+      process.exit(1);
+    }
+  })();
+}
