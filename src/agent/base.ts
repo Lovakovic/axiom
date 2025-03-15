@@ -11,6 +11,7 @@ import {MessageEvent, StreamEvent, TextStreamEvent, ToolEvent, ToolInputEvent, T
 import {SystemMessagePromptTemplate} from "@langchain/core/prompts";
 import {MessageContentText} from "@langchain/core/dist/messages/base";
 import {ConversationState} from "./state/conversation.state";
+import { Logger } from "../logger";
 
 dotenv.config();
 
@@ -173,82 +174,173 @@ export abstract class BaseAgent {
     input: string,
     options?: { signal?: AbortSignal; previousBuffer?: { role: "human" | "ai"; text: string }[] }
   ): AsyncGenerator<StreamEvent> {
+    const logger = Logger.getInstance();
+    await logger.debug('STREAM', 'Starting streamResponse', {
+      inputLength: input.length,
+      hasSignal: !!options?.signal,
+      signalAborted: options?.signal?.aborted,
+      hasBuffer: !!options?.previousBuffer
+    });
+
     const convState = ConversationState.getInstance();
 
     // First get the messages from the conversation state - this will finalize buffers
     const messages = convState.getMessages();
+    await logger.debug('STREAM', 'Retrieved conversation messages', {
+      messageCount: messages.length,
+      messageTypes: messages.map(m => m.getType())
+    });
 
     // Then add the human input as a complete message.
     convState.addMessage(new HumanMessage({ content: input }));
+    await logger.debug('STREAM', 'Added human message to conversation');
 
     let currentToolId = "";
+    let eventCount = 0;
+    let lastEventTime = Date.now();
 
-    for await (const event of this.app.streamEvents(
-      { messages },
-      {
-        version: "v2",
-        recursionLimit: 100,
-        signal: options?.signal,
-      }
-    )) {
-      if (event.event === 'on_chat_model_end') {
-        convState.clearBuffers();
-        const message = event.data.output as AIMessageChunk;
+    try {
+      await logger.debug('STREAM', 'Beginning to stream events');
+      for await (const event of this.app.streamEvents(
+        { messages },
+        {
+          version: "v2",
+          recursionLimit: 100,
+          signal: options?.signal,
+        }
+      )) {
+        const now = Date.now();
+        eventCount++;
 
-        if(Array.isArray(message.content) && message.content.some(isAnthropicTextContent)) {
-          const texts = message.content
-            .map((content) => isAnthropicTextContent(content)
-              ? { type: 'text' as const, content: content.text }
-              : null)
-            .filter((item): item is { type: 'text', content: string } => item !== null);
+        // Log timing information periodically
+        if (eventCount % 20 === 0 || now - lastEventTime > 2000) {
+          await logger.debug('STREAM', 'Stream progress', {
+            eventCount,
+            timeSinceLastEvent: now - lastEventTime,
+            eventType: event.event
+          });
+        }
+        lastEventTime = now;
 
-          if (texts.length > 0) {
-            yield* texts as MessageEvent[]; // Should only be one, but just in case
+        // Check if signal is aborted
+        if (options?.signal?.aborted) {
+          await logger.info('STREAM', 'Stream aborted by signal', {
+            reason: options.signal.reason,
+            eventCount
+          });
+          break;
+        }
+
+        if (event.event === 'on_chat_model_end') {
+          await logger.debug('STREAM', 'Chat model end event', {
+            outputType: event.data.output?.constructor?.name,
+            hasToolCalls: !!(event.data.output?.tool_calls?.length),
+            toolCallCount: event.data.output?.tool_calls?.length || 0
+          });
+
+          convState.clearBuffers();
+          const message = event.data.output as AIMessageChunk;
+
+          if(Array.isArray(message.content) && message.content.some(isAnthropicTextContent)) {
+            const texts = message.content
+              .map((content) => isAnthropicTextContent(content)
+                ? { type: 'text' as const, content: content.text }
+                : null)
+              .filter((item): item is { type: 'text', content: string } => item !== null);
+
+            if (texts.length > 0) {
+              await logger.debug('STREAM', 'Yielding text content', {
+                textCount: texts.length,
+                firstTextLength: texts[0]?.content?.length || 0
+              });
+              yield* texts as MessageEvent[]; // Should only be one, but just in case
+            }
+          }
+
+          if(typeof message.content === 'string' && message.content.trim().length > 0) {
+            await logger.debug('STREAM', 'Yielding string content', {
+              contentLength: message.content.length
+            });
+            yield { type: 'text', content: message.content } as MessageEvent;
+          }
+
+          if (message.tool_calls && message.tool_calls.length > 0) {
+            await logger.debug('STREAM', 'Processing tool calls', {
+              toolCallCount: message.tool_calls.length
+            });
+            for (const toolCall of message.tool_calls) {
+              await logger.debug('STREAM', 'Yielding tool call', {
+                toolName: toolCall.name,
+                toolId: toolCall.id || 'unknown-tool-id'
+              });
+              yield { type: 'tool_call', tool: { ...toolCall, id: toolCall.id ?? 'unknown-tool-id'} } as ToolEvent;
+            }
           }
         }
 
-        if(typeof  message.content === 'string' && message.content.trim().length > 0) {
-          yield { type: 'text', content: message.content } as MessageEvent;
+        if (event.event !== 'on_chat_model_stream') continue;
+
+        // Periodically log stream progress
+        if (eventCount % 50 === 0) {
+          await logger.debug('STREAM', 'Chat model stream progress', {
+            eventCount
+          });
         }
 
-        if (message.tool_calls && message.tool_calls.length > 0) {
-          for (const toolCall of message.tool_calls) {
-            yield { type: 'tool_call', tool: { ...toolCall, id: toolCall.id ?? 'unknown-tool-id'} } as ToolEvent;
+        const chunk = event.data.chunk as AIMessageChunk;
+
+        if (chunk.content && Array.isArray(chunk.content)) {
+          for (const contentItem of chunk.content) {
+            if (contentItem.type === 'text' && contentItem.text) {
+              convState.addTextDelta(contentItem.text);
+              yield { type: 'text_delta', content: contentItem.text } as TextStreamEvent;
+            }
+          }
+        }
+        if (chunk.content && typeof chunk.content === 'string') {
+          convState.addTextDelta(chunk.content);
+          yield { type: 'text_delta', content: chunk.content } as TextStreamEvent;
+        }
+        if (chunk.tool_calls && Array.isArray(chunk.tool_calls)) {
+          for (const toolCall of chunk.tool_calls) {
+            const toolId = toolCall.id ?? 'unknown-tool-id';
+            currentToolId = toolId;
+            convState.addToolCallDelta(toolCall.name + ': ');
+            await logger.debug('STREAM', 'Tool start event', {
+              toolName: toolCall.name,
+              toolId
+            });
+            yield { type: 'tool_start', tool: { name: toolCall.name, id: toolId } } as ToolStartEvent;
+          }
+        }
+        if (chunk.tool_call_chunks && Array.isArray(chunk.tool_call_chunks)) {
+          for (const toolCallChunk of chunk.tool_call_chunks) {
+            if (toolCallChunk.args && currentToolId) {
+              convState.addToolCallDelta(toolCallChunk.args);
+              if (eventCount % 30 === 0) {
+                await logger.debug('STREAM', 'Tool input delta', {
+                  toolId: currentToolId,
+                  argsLength: toolCallChunk.args.length
+                });
+              }
+              yield { type: 'tool_input_delta', content: toolCallChunk.args, toolId: currentToolId } as ToolInputEvent;
+            }
           }
         }
       }
 
-      if (event.event !== 'on_chat_model_stream') continue;
-      const chunk = event.data.chunk as AIMessageChunk;
+      await logger.debug('STREAM', 'Stream completed successfully', {
+        totalEvents: eventCount
+      });
+    } catch (error) {
+      await logger.error('STREAM', 'Error in stream processing', {
+        error: error instanceof Error ? error.stack : String(error),
+        eventCount,
+        lastEventTime: new Date(lastEventTime).toISOString()
+      });
 
-      if (chunk.content && Array.isArray(chunk.content)) {
-        for (const contentItem of chunk.content) {
-          if (contentItem.type === 'text' && contentItem.text) {
-            convState.addTextDelta(contentItem.text);
-            yield { type: 'text_delta', content: contentItem.text } as TextStreamEvent;
-          }
-        }
-      }
-      if (chunk.content && typeof chunk.content === 'string') {
-        convState.addTextDelta(chunk.content);
-        yield { type: 'text_delta', content: chunk.content } as TextStreamEvent;
-      }
-      if (chunk.tool_calls && Array.isArray(chunk.tool_calls)) {
-        for (const toolCall of chunk.tool_calls) {
-          const toolId = toolCall.id ?? 'unknown-tool-id';
-          currentToolId = toolId;
-          convState.addToolCallDelta(toolCall.name + ': ');
-          yield { type: 'tool_start', tool: { name: toolCall.name, id: toolId } } as ToolStartEvent;
-        }
-      }
-      if (chunk.tool_call_chunks && Array.isArray(chunk.tool_call_chunks)) {
-        for (const toolCallChunk of chunk.tool_call_chunks) {
-          if (toolCallChunk.args && currentToolId) {
-            convState.addToolCallDelta(toolCallChunk.args);
-            yield { type: 'tool_input_delta', content: toolCallChunk.args, toolId: currentToolId } as ToolInputEvent;
-          }
-        }
-      }
+      // Re-throw to allow proper handling in calling code
+      throw error;
     }
   }
 }
