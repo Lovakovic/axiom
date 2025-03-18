@@ -1,6 +1,11 @@
 import dotenv from "dotenv";
-import { ChatOpenAI } from "@langchain/openai";
+import { ChatOpenAI, ChatOpenAICallOptions } from "@langchain/openai";
 import { BaseAgent } from "../base";
+import { MCPClient } from "../mcp.client";
+import { StructuredToolInterface } from "@langchain/core/tools";
+import { Runnable } from "@langchain/core/runnables";
+import { BaseLanguageModelInput } from "@langchain/core/dist/language_models/base";
+import { AIMessageChunk } from "@langchain/core/messages";
 
 dotenv.config();
 
@@ -9,7 +14,7 @@ export class OpenAI extends BaseAgent {
     return PROMPT;
   }
 
-  protected createModel(allTools: any[]): any {
+  protected createModel(allTools: StructuredToolInterface[]): Runnable<BaseLanguageModelInput, AIMessageChunk, ChatOpenAICallOptions> {
     return new ChatOpenAI({
       apiKey: process.env.OPENAI_API_KEY,
       model: "o3-mini",
@@ -17,7 +22,7 @@ export class OpenAI extends BaseAgent {
     }).bindTools(allTools);
   }
 
-  public static async init(mcpClient: any): Promise<OpenAI> {
+  public static async init(mcpClient: MCPClient): Promise<OpenAI> {
     if (!process.env.OPENAI_API_KEY) {
       throw new Error("OPENAI_API_KEY is not set in environment variables for o3-mini");
     }
