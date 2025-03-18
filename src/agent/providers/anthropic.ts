@@ -14,10 +14,10 @@ export class Anthropic extends BaseAgent {
       apiKey: process.env.ANTHROPIC_API_KEY,
       model: "claude-3-7-sonnet-20250219",
       streaming: true,
-      thinking: {
-        type: 'enabled',
-        budget_tokens: 2048
-      },
+      // thinking: {
+      //   type: 'enabled',
+      //   budget_tokens: 2048
+      // },
       maxTokens: 32000
     }).bindTools(allTools);
   }
