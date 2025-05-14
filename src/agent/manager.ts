@@ -2,16 +2,18 @@
 
 import { OpenAI } from "./providers/openai";
 import { Anthropic } from "./providers/anthropic";
+import { VertexAI } from "./providers/vertexai";
 import { MCPClient } from "./mcp.client";
 
 export class AgentManager {
   private agents: { [key: string]: any } = {};
-  private activeAgentKey: string = "anthropic";
+  private activeAgentKey: string = "gemini"; // Changed default to gemini
 
   // Initialize both agent providers
   async init(mcpClient: MCPClient): Promise<void> {
     this.agents["openai"] = await OpenAI.init(mcpClient);
-    this.agents["anthropic"] = await Anthropic.init(mcpClient);
+    this.agents["claude"] = await Anthropic.init(mcpClient);
+    this.agents["gemini"] = await VertexAI.init(mcpClient); // Initialize gemini
   }
 
   // Return the currently active agent

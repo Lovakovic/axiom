@@ -7,7 +7,7 @@ The CLI agent provides an interactive terminal interface for users to communicat
 ## Features and Enhancements
 
 1. **Multi-Agent Support**
-   - Supports dynamic switching between multiple agents (OpenAI and Anthropic) via the `/switch` command.
+   - Supports dynamic switching between multiple agents (OpenAI, Anthropic, and Google Vertex AI (Gemini)) via the `/switch` command.
    - The Agent Manager reinitializes connections and preserves conversation context after interruptions.
 
 2. **Improved Streaming and State Management**
@@ -35,7 +35,7 @@ The CLI agent provides an interactive terminal interface for users to communicat
 
 - **Tool Execution:** Dynamic tool invocations with schema validation, supporting both local tools and remote MCP protocol calls.
 
-- **Multi-Agent Architecture:** An enhanced Agent Manager that facilitates switching between OpenAI and Anthropic providers based on task requirements.
+- **Multi-Agent Architecture:** An enhanced Agent Manager that facilitates switching between OpenAI, Anthropic, and Google Vertex AI (Gemini) providers based on task requirements.
 
 ## Implementation Considerations
 
@@ -44,4 +44,3 @@ The CLI agent provides an interactive terminal interface for users to communicat
 - **User Experience Enhancements:** Provides clear feedback on interruptions, smooth dynamic agent switching, and detailed error messages.
 
 - **Performance and Scalability:** Optimized for efficient stream processing with minimal memory overhead; plans to extend support for remote tool execution in future releases.
-

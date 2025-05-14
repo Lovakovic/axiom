@@ -8,6 +8,7 @@ MCP is a sophisticated desktop assistant designed primarily for Linux and macOS 
 ### Primary Framework
 - **Node.js v23**: The project is built on Node.js, leveraging its asynchronous event-driven architecture for efficient stream processing and real-time interaction handling.
 - **LangChain & LangGraph**: The foundation remains built on LangChain and LangGraph, providing structured conversation flows, tool integration, state management for complex interactions, and stream-based response handling. Recent enhancements include improved error recovery and multi-agent support.
+   - Multi-agent support now includes OpenAI, Anthropic, and Google Vertex AI (Gemini models).
 
 ### Key Components
 1. **Model Context Protocol (MCP)**
@@ -16,6 +17,7 @@ MCP is a sophisticated desktop assistant designed primarily for Linux and macOS 
 
 2. **Agent Architecture**
    - Supports multiple agents with dynamic switching, ensuring optimal performance and flexibility.
+   - Currently supports OpenAI, Anthropic, and Google Vertex AI (Gemini) agents.
    - Utilizes an enhanced state machine via LangGraph, offering robust conversation context preservation and efficient recovery from interruptions.
 
 3. **Server Components**
@@ -33,6 +35,7 @@ MCP is a sophisticated desktop assistant designed primarily for Linux and macOS 
 
 2. **Agent Layer (`src/agent/`):**
    - Incorporates multi-agent support with dynamic switching between providers.
+   - Supports OpenAI, Anthropic, and Google Vertex AI (Gemini) providers.
    - Robust conversation and state management with improved interruption recovery mechanisms.
    - Advanced streaming response integration that cleanly separates text outputs from tool execution events.
 
@@ -63,9 +66,10 @@ MCP is a sophisticated desktop assistant designed primarily for Linux and macOS 
 
 ## Technical Requirements
 - Node.js 23.x
-- Anthropic and OpenAI API keys
+- API keys/credentials for desired providers (OpenAI API Key, Anthropic API Key).
 - Linux or macOS operating systems
 - npm/yarn package manager
+- For Google Vertex AI: `@langchain/google-vertexai` package and `GOOGLE_APPLICATION_CREDENTIALS` environment variable pointing to your service account key JSON file (e.g., `gc_key.json`).
 
 ## Future Capabilities
 - Remote tool execution through expanded MCP protocol features.
@@ -85,7 +89,7 @@ MCP is a sophisticated desktop assistant designed primarily for Linux and macOS 
 ```
 
 ## Key Features
-1. Natural language command execution with dynamic multi-agent support.
+1. Natural language command execution with dynamic multi-agent support (OpenAI, Anthropic, Google Vertex AI/Gemini).
 2. Robust system-level access combined with refined error handling and recovery.
 3. Structured conversation flows with advanced state management.
 4. Real-time streaming response handling with improved separation of events.

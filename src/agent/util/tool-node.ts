@@ -125,13 +125,24 @@ export class ToolNode {
       }
       return true;
     } catch (error) {
-      const jsonSchema = tool.schema ? zodToJsonSchema(tool.schema, call.name) : null;
+      // Corrected logic:
+      let schemaForLogging: object | null = null;
+      if (tool.schema) {
+        if (tool.schema instanceof z.ZodType) {
+          // tool.schema is a Zod schema, so we can convert it
+          schemaForLogging = zodToJsonSchema(tool.schema, call.name);
+        } else {
+          // This is already in a JSON schema format, so we can use it directly.
+          schemaForLogging = tool.schema;
+        }
+      }
+
       await ToolNode.logger.warn('TOOL_NODE', 'Tool input validation failed', {
         toolName: call.name,
         toolId: call.id,
         error: error instanceof Error ? error.message : String(error),
         providedArgs: call.args,
-        schema: jsonSchema
+        schema: schemaForLogging // Use the correctly processed schema
       });
       return false;
     }
