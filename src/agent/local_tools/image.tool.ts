@@ -1,5 +1,5 @@
 import { convertJSONSchemaDraft7ToZod } from "../../shared/util/draftToZod";
-import { MCPClient } from "../client";
+import { MCPClient } from "../mcp.client";
 import { LocalTool } from "./base";
 import { MessageContentComplex } from "@langchain/core/messages";
 

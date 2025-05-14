@@ -1,12 +1,12 @@
 "use strict";
 
-import { OpenAI } from "./providers/openAI";
+import { OpenAI } from "./providers/openai";
 import { Anthropic } from "./providers/anthropic";
-import { MCPClient } from "./client";
+import { MCPClient } from "./mcp.client";
 
 export class AgentManager {
   private agents: { [key: string]: any } = {};
-  private activeAgentKey: string = "openai";
+  private activeAgentKey: string = "anthropic";
 
   // Initialize both agent providers
   async init(mcpClient: MCPClient): Promise<void> {

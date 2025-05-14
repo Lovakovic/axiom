@@ -1,6 +1,11 @@
 import dotenv from "dotenv";
-import { ChatAnthropic } from "@langchain/anthropic";
-import { BaseAgent } from "../baseAgent";
+import { ChatAnthropic, ChatAnthropicCallOptions } from "@langchain/anthropic";
+import { BaseAgent } from "../base";
+import { StructuredToolInterface } from "@langchain/core/tools";
+import { Runnable } from "@langchain/core/runnables";
+import { BaseLanguageModelInput } from "@langchain/core/dist/language_models/base";
+import { AIMessageChunk } from "@langchain/core/messages";
+import { MCPClient } from "../mcp.client";
 
 dotenv.config();
 
@@ -9,16 +14,20 @@ export class Anthropic extends BaseAgent {
     return PROMPT;
   }
 
-  protected createModel(allTools: any[]): any {
+  protected createModel(allTools: StructuredToolInterface[]): Runnable<BaseLanguageModelInput, AIMessageChunk, ChatAnthropicCallOptions> {
     return new ChatAnthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
-      model: "claude-3-5-sonnet-20241022",
-      temperature: 0,
+      model: "claude-3-7-sonnet-20250219",
       streaming: true,
+      thinking: {
+        type: 'enabled',
+        budget_tokens: 1024
+      },
+      maxTokens: 32000
     }).bindTools(allTools);
   }
 
-  public static async init(mcpClient: any): Promise<Anthropic> {
+  public static async init(mcpClient: MCPClient): Promise<Anthropic> {
     if (!process.env.ANTHROPIC_API_KEY) {
       throw new Error("ANTHROPIC_API_KEY is not set in environment variables for Claude");
     }

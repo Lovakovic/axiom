@@ -26,7 +26,7 @@ declare -a input_paths=()
 # Non-text file extensions to skip (simplified matching like nuke.sh)
 readonly SKIP_EXTENSIONS="png jpg jpeg gif svg ico webp bmp tiff ttf woff woff2 eot otf mp3 mp4 wav ogg webm avi mov zip tar gz rar 7z pdf doc docx xls xlsx ppt pptx map min.js min.css exe dll so dylib"
 
-# Directories to exclude (common in Python projects)
+# Directories to exclude (common in Python proje cts)
 readonly EXCLUDED_DIRS=".venv __pycache__"
 
 # Help message
@@ -107,7 +107,7 @@ process_file() {
     [[ "$base_name" == "$output_file" ]] && return
     [[ "$base_name" == .* ]] && return
     [[ "$dir_name" == *"/."* ]] && return
-    [[ "$file" == *"node_modules"* ]] && return
+#    [[ "$file" == *"node_modules"* ]] && return
 
     # Skip additional excluded directories
     if should_exclude_dir "$dir_name"; then

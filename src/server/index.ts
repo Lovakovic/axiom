@@ -94,7 +94,6 @@ if (require.main === module) {
     const { server, cleanup } = createServer();
 
     await server.connect(transport);
-    console.error("MCP Server running on stdio");
 
     // Handle cleanup on process termination
     process.on("SIGINT", async () => {

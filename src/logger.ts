@@ -10,7 +10,15 @@ export interface LogEntry {
   metadata?: Record<string, any>;
 }
 
-export class Logger {
+export interface ILogger {
+  // Public methods that CLI and other components will use
+  info(category: string, message: string, metadata?: Record<string, any>): Promise<void>;
+  debug(category: string, message: string, metadata?: Record<string, any>): Promise<void>;
+  warn(category: string, message: string, metadata?: Record<string, any>): Promise<void>;
+  error(category: string, message: string, metadata?: Record<string, any>): Promise<void>;
+}
+
+export class Logger implements ILogger{
   private static instance: Logger;
   private readonly logDir: string;
   private readonly currentLogFile: string;

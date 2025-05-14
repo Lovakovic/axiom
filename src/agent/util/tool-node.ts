@@ -1,4 +1,4 @@
-import {AIMessage, isBaseMessage, ToolMessage} from "@langchain/core/messages";
+import {AIMessage, BaseMessage, isBaseMessage, ToolMessage} from "@langchain/core/messages";
 import {RunnableConfig} from "@langchain/core/runnables";
 import {isCommand, isGraphInterrupt} from "@langchain/langgraph";
 import {StructuredToolInterface} from "@langchain/core/tools";
@@ -6,7 +6,7 @@ import {isLocalTool} from "../local_tools/base";
 import {Logger} from '../../logger';
 import {z} from 'zod';
 import {zodToJsonSchema} from 'zod-to-json-schema';
-import {StateAnnotation} from "../baseAgent";
+import {StateAnnotation} from "../base";
 
 export type ToolNodeOptions = {
   name?: string;
@@ -137,7 +137,7 @@ export class ToolNode {
     }
   }
 
-  async invoke(state: typeof StateAnnotation.State, config?: RunnableConfig) {
+  async invoke(state: typeof StateAnnotation.State, config?: RunnableConfig): Promise<{ messages: BaseMessage[] }> {
     const messages = state.messages;
     const message = messages[messages.length - 1];
 
@@ -210,7 +210,7 @@ export class ToolNode {
             isCommand: isCommand(output)
           });
 
-          if (isBaseMessage(output) && output.getType() === "tool" || isCommand(output)) {
+          if (isBaseMessage(output) && output.getType() === "tool") {
             return output;
           }
 
@@ -249,11 +249,8 @@ export class ToolNode {
       hasCommands: true
     });
 
-    return outputs.map((output) => {
-      if (isCommand(output)) {
-        return output;
-      }
-      return {messages: [output]};
-    });
+    return {
+      messages: outputs
+    }
   }
 }
