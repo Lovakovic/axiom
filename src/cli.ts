@@ -9,7 +9,7 @@ const BLUE = '\x1b[34m';
 const RESET = '\x1b[0m';
 
 export class CLI {
-  private agentManager!: AgentManager;
+  private readonly agentManager: AgentManager;
   private mcpClient!: MCPClient;
   private readonly originalStderr: NodeJS.WriteStream['write'];
   private readonly logger: ILogger;
@@ -30,6 +30,7 @@ export class CLI {
 
   constructor(logger: ILogger) {
     this.logger = logger;
+    this.agentManager = new AgentManager();
 
     this.rl = readline.createInterface({
       input: process.stdin,
@@ -89,18 +90,32 @@ export class CLI {
     this.mcpClient = new MCPClient();
     await this.mcpClient.connect("node", ["dist/server/index.js"]);
 
-    // Initialize AgentManager with both providers
-    this.agentManager = new AgentManager();
+    // Initialize AgentManager
     await this.agentManager.init(this.mcpClient);
 
-    await this.logger.info('INIT', 'MCP client and agent manager initialized successfully');
+    if (!this.agentManager.currentAgentKey) {
+      const errorMsg = 'No agents available after initialization. CLI cannot operate without an agent.';
+      await this.logger.error('INIT', errorMsg);
+      console.error(`${YELLOW}Critical: No AI agents could be initialized. Please check your API key configurations (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_APPLICATION_CREDENTIALS).${RESET}`);
+      console.error(`${YELLOW}Refer to logs for more details. Exiting.${RESET}`);
+      await this.cleanup(); // Perform cleanup before exiting
+      process.exit(1); // Exit if no agent could be set up
+    }
+
+    await this.logger.info('INIT', `MCP client and agent manager initialized. Default agent: ${this.agentManager.currentAgentKey}`);
   }
 
   public async start() {
     this.logger.info('START', 'CLI starting');
+    if (!this.agentManager.activeAgent) { // Check if an agent is actually active
+      console.error(`${YELLOW}No active agent available. CLI cannot start interactive mode. Please check configuration and logs.${RESET}`);
+      await this.cleanup();
+      process.exit(1);
+    }
     console.log("Agent ready! Press Ctrl+C once to interrupt, twice to do nothing, three times to exit.");
     console.log(`Current agent: ${this.agentManager.currentAgentKey}`);
-    console.log("To switch models, type: /switch openai  OR  /switch anthropic");
+    console.log(`To switch models, type: /switch <agent_name> (e.g., /switch openai, /switch claude, /switch gemini)`);
+    console.log(`Available configured agents: ${this.agentManager.getAvailableAgentKeys().join(", ") || "None"}`);
     this.rl.prompt();
   }
 
@@ -233,6 +248,7 @@ export class CLI {
 
       // 5. Initialize the agent manager with timeout protection
       await this.logger.debug('RECONNECT', 'Initializing agent manager');
+      // Agent Manager now uses the same instance, just re-init with new client
       const initPromise = this.agentManager.init(this.mcpClient);
       const initTimeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Agent initialization timeout')), 5000);
@@ -494,6 +510,9 @@ export class CLI {
         const newAgent = trimmed.substring(8).trim().toLowerCase();
         const switchMsg = this.agentManager.switchAgent(newAgent);
         console.log(YELLOW + switchMsg + RESET);
+        if (this.agentManager.currentAgentKey === newAgent) {
+          console.log(`Current agent: ${this.agentManager.currentAgentKey}`);
+        }
         this.rl.prompt();
         return;
       }
@@ -705,6 +724,14 @@ export class CLI {
       return;
     }
 
+    const activeAgent = this.agentManager.activeAgent;
+    if (!activeAgent) {
+      await this.logger.error('HANDLE', 'No active agent to handle line. This should not happen if init was successful.');
+      console.log(`${YELLOW}Error: No active agent. Cannot process input. Please check logs and configuration.${RESET}`);
+      this.rl.prompt();
+      return;
+    }
+
     try {
       process.stdout.write("\nAgent: ");
 
@@ -719,7 +746,7 @@ export class CLI {
       let toolEventOccurred = false;
 
       await this.logger.debug('HANDLE', 'Before streaming agent response');
-      for await (const event of this.agentManager.activeAgent.streamResponse(
+      for await (const event of activeAgent.streamResponse(
         line,
         { signal: this.currentAbortController.signal }
       )) {
@@ -928,18 +955,20 @@ process.on('unhandledRejection', async (error) => {
 
 if (require.main === module) {
   (async () => {
+    let logger: Logger | null = null; // Initialize to null
     try {
-      const logger = await Logger.init();
+      logger = await Logger.init(); // Logger must be initialized first
       await logger.info('STARTUP', 'Starting main process');
 
       const cli = new CLI(logger);
       await cli.init();
       await cli.start();
     } catch (error) {
-      const logger = Logger.getInstance();
-      await logger.error('STARTUP', 'Error in main process', {
-        error: error instanceof Error ? error.stack : String(error)
-      });
+      if (logger) { // Log error only if logger was initialized
+        await logger.error('STARTUP', 'Error in main process', {
+          error: error instanceof Error ? error.stack : String(error)
+        });
+      }
       console.error('[ERROR] Main process error:', error);
       process.exit(1);
     }

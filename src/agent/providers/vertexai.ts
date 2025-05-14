@@ -28,11 +28,11 @@ export class VertexAI extends BaseAgent {
 
   public static async init(mcpClient: MCPClient): Promise<VertexAI> {
     if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      console.warn(
-        "WARNING: GOOGLE_APPLICATION_CREDENTIALS environment variable is not set. " +
-        "ChatVertexAI might not authenticate correctly. Ensure it's set to the path of your service account key file (e.g., './gc_key.json')."
+      // Making this a hard requirement for this application's logic for consistency
+      throw new Error(
+        "GOOGLE_APPLICATION_CREDENTIALS environment variable is not set. " +
+        "VertexAI (Gemini) agent cannot be initialized. Ensure it's set to the path of your service account key file."
       );
-      // Note: The SDK might still attempt other auth methods (e.g., gcloud default).
     }
 
     const agent = new VertexAI(mcpClient, null, null);
