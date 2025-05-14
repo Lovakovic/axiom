@@ -2,3 +2,4 @@
 /node_modules/
 /dist/
 .env
+/gc_key.json
