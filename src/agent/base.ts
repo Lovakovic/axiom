@@ -131,10 +131,23 @@ export abstract class BaseAgent {
         return false;
       }
     };
+    
+    // Helper function to read /etc/os-release
+    const getDistroInfo = async (): Promise<string> => {
+      try {
+        const fs = require('fs').promises;
+        const osRelease = await fs.readFile("/etc/os-release", "utf-8");
+        const match = osRelease.match(/^PRETTY_NAME="([^"]*)"/m);
+        return match ? match[1] : 'Unknown Distro';
+      } catch {
+        return 'Unknown Distro';
+      }
+    };
 
     return {
       user: os.userInfo().username,
       OS: `${os.type()} ${os.release()}`,
+      distro: await getDistroInfo(),
       shell_type: process.env.SHELL ?? "Unknown",
       date_time: new Date().toISOString(),
       architecture: os.arch(),
@@ -205,7 +218,7 @@ export abstract class BaseAgent {
         { messages },
         {
           version: "v2",
-          recursionLimit: 100,
+          recursionLimit: 500,
           signal: options?.signal,
         }
       )) {
