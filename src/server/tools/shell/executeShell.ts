@@ -4,6 +4,10 @@ import util from "util";
 
 const execPromise = util.promisify(exec);
 
+interface ToolParams {
+  command: string;
+}
+
 export const toolDefinition: Tool = {
   name: "execute-shell",
   description: "Executes bash commands on user's laptop and returns the output. This allows you to ",
@@ -19,9 +23,9 @@ export const toolDefinition: Tool = {
   },
 };
 
-export async function executeShellTool(command: string): Promise<CallToolResult> {
+export async function executeShellTool(args: ToolParams): Promise<CallToolResult> {
+  const { command } = args;
   try {
-    console.log('Executing command', command)
     const { stdout, stderr } = await execPromise(command);
     return {
       content: [

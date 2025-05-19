@@ -61,7 +61,7 @@ export function createServer() {
     if (!tool) {
       throw new Error(`Unknown tool: ${request.params.name}`);
     }
-    return tool.handler(request.params.arguments?.["command"] as string);
+    return tool.handler(request.params.arguments);
   });
 
   // Prompt handlers
