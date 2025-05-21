@@ -10,7 +10,7 @@ interface ToolParams {
 
 export const toolDefinition: Tool = {
   name: "execute-shell",
-  description: "Executes bash commands on user's laptop and returns the output. This allows you to ",
+  description: "Executes bash commands on user's laptop and returns the output. This allows you to run any command.",
   inputSchema: {
     type: "object",
     properties: {
