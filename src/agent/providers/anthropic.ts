@@ -17,11 +17,11 @@ export class Anthropic extends BaseAgent {
   protected createModel(allTools: StructuredToolInterface[]): Runnable<BaseLanguageModelInput, AIMessageChunk, ChatAnthropicCallOptions> {
     return new ChatAnthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
-      model: "claude-3-7-sonnet-20250219",
+      model: "claude-sonnet-4-20250514",
       streaming: true,
       thinking: {
         type: 'enabled',
-        budget_tokens: 1024
+        budget_tokens: 2048
       },
       maxTokens: 32000
     }).bindTools(allTools);
