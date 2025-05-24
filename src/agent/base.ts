@@ -76,9 +76,16 @@ export abstract class BaseAgent {
       }
 
       const filteredMessages = messages.filter(message => {
-        if (typeof message.content === 'string' && message.content.trim().length > 0) return true;
+        if (message.getType() === 'ai' && (message as AIMessage).tool_calls && (message as AIMessage).tool_calls!.length > 0) {
+          return true;
+        }
+        if (typeof message.content === 'string' && message.content.trim().length > 0) {
+          return true;
+        }
         if (Array.isArray(message.content) && message.content.length > 0) {
-          return message.content.every(part => part.type === 'text' ? (part as any).text?.trim().length > 0 : true);
+          return message.content.some(part =>
+            part.type === 'text' ? (part as MessageContentText).text?.trim().length > 0 : true
+          );
         }
         return false;
       });

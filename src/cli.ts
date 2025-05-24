@@ -12,7 +12,7 @@ const YELLOW = '\x1b[33m';
 const BLUE = '\x1b[34m';
 const RESET = '\x1b[0m';
 
-const DEBUG_SERVER_PORT = process.env.DEBUG_SERVER_PORT || 3005;
+const DEFAULT_DEBUG_SERVER_PORT = process.env.DEBUG_SERVER_PORT ? parseInt(process.env.DEBUG_SERVER_PORT, 10) : 3005;
 
 export class CLI {
   private readonly agentManager: AgentManager;
@@ -34,6 +34,7 @@ export class CLI {
   private rl: readline.Interface;
   private serverProcess: import('child_process').ChildProcess | null = null;
   private debugServer: http.Server | null = null;
+  private actualDebugServerPort: number = DEFAULT_DEBUG_SERVER_PORT;
 
   constructor(logger: ILogger) {
     this.logger = logger;
@@ -111,42 +112,71 @@ export class CLI {
   }
 
   private async startDebugServer(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const app = express();
-      app.use(cors());
-      app.use(express.json());
+    const app = express();
+    app.use(cors());
+    app.use(express.json());
 
-      app.get('/state', (req, res) => {
-        const state = ConversationState.getInstance().getDebugState();
-        res.json(state);
-      });
-
-      app.post('/clear-state', (req, res) => {
-        ConversationState.getInstance().clearMessages();
-        this.logger.info('DEBUG_SERVER', 'Conversation state cleared via API');
-        res.status(200).send({ message: 'Conversation state cleared' });
-      });
-
-      app.get('/logs', (req, res) => {
-        const logs = Logger.getInstance().getArchivedLogs();
-        res.json(logs);
-      });
-
-      this.debugServer = http.createServer(app);
-      this.debugServer.listen(DEBUG_SERVER_PORT, () => {
-        this.logger.info('DEBUG_SERVER', `Debug server listening on port ${DEBUG_SERVER_PORT}`);
-        // These console logs will now happen before init() resolves
-        console.log(`${BLUE}Debugger API up and running!${RESET}`);
-        console.log(`${BLUE}  State: http://localhost:${DEBUG_SERVER_PORT}/state${RESET}`);
-        console.log(`${BLUE}  Logs:  http://localhost:${DEBUG_SERVER_PORT}/logs${RESET}`);
-        resolve(); // Resolve the promise once server is listening and messages are printed
-      });
-
-      this.debugServer.on('error', (error) => {
-        this.logger.error('DEBUG_SERVER', 'Debug server error', { error: error.message });
-        reject(error); // Reject the promise if the server fails to start
-      });
+    app.get('/state', (req, res) => {
+      const state = ConversationState.getInstance().getDebugState();
+      res.json(state);
     });
+
+    app.post('/clear-state', (req, res) => {
+      ConversationState.getInstance().clearMessages();
+      this.logger.info('DEBUG_SERVER', 'Conversation state cleared via API');
+      res.status(200).send({ message: 'Conversation state cleared' });
+    });
+
+    app.get('/logs', (req, res) => {
+      const logs = Logger.getInstance().getArchivedLogs();
+      res.json(logs);
+    });
+
+    this.debugServer = http.createServer(app);
+
+    const tryListen = (port: number): Promise<void> => {
+      return new Promise((resolve, reject) => {
+        const server = this.debugServer!;
+        
+        // Define handlers specifically for this attempt
+        const onError = (error: NodeJS.ErrnoException) => {
+          // Remove these specific handlers to prevent them from firing again
+          server.removeListener('error', onError);
+          server.removeListener('listening', onListening);
+
+          if (error.code === 'EADDRINUSE') {
+            this.logger.warn('DEBUG_SERVER', `Port ${port} is in use. Trying a random port.`);
+            // Attempt a random port between 1024 and 65535
+            const randomPort = Math.floor(Math.random() * (65535 - 1024 + 1)) + 1024;
+            tryListen(randomPort).then(resolve).catch(reject);
+          } else {
+            this.logger.error('DEBUG_SERVER', 'Debug server error', { error: error.message });
+            reject(error); 
+          }
+        };
+
+        const onListening = () => {
+          // Clean up both handlers once listening is successful
+          server.removeListener('error', onError);
+          server.removeListener('listening', onListening);
+
+          this.actualDebugServerPort = port;
+          this.logger.info('DEBUG_SERVER', `Debug server listening on port ${port}`);
+          console.log(`${BLUE}Debugger API up and running!${RESET}`);
+          console.log(`${BLUE}  State: http://localhost:${port}/state${RESET}`);
+          console.log(`${BLUE}  Logs:  http://localhost:${port}/logs${RESET}`);
+          resolve(); 
+        };
+
+        // Add the specific handlers for this attempt
+        server.on('error', onError);
+        server.on('listening', onListening);
+
+        // Attempt to listen
+        server.listen(port);
+      });
+    };
+    return tryListen(DEFAULT_DEBUG_SERVER_PORT);
   }
 
   public async start() {
@@ -156,7 +186,6 @@ export class CLI {
       await this.cleanup();
       process.exit(1);
     }
-    // These messages will print after init() (including debug server messages) is complete.
     console.log("Agent ready! Press Ctrl+C once to interrupt, twice to do nothing, three times to exit.");
     console.log(`Current agent: ${this.agentManager.currentAgentKey}`);
     console.log(`To switch models, type: /switch <agent_name> (e.g., /switch openai, /switch claude, /switch gemini)`);
@@ -535,3 +564,4 @@ if (require.main === module) {
     }
   })();
 }
+
