@@ -32,13 +32,10 @@ export abstract class BaseAgent {
     this.model = model;
   }
 
-  // Subclasses must implement these methods to provide a unique system message and model configuration.
   protected abstract createModel(allTools: any[]): any;
 
-  // Common setup: get MCP tools, wrap them, create local tools, combine and form a tool node.
   protected async commonSetup(): Promise<{ allTools: any[]; systemMessage: SystemMessage; toolNode: any }> {
     const tools = await this.mcpClient.getTools();
-
     const wrappedMCPTools = tools.map((mcpTool) => {
       return new DynamicStructuredTool({
         name: mcpTool.name,
@@ -57,36 +54,52 @@ export abstract class BaseAgent {
         schema: convertJSONSchemaDraft7ToZod(JSON.stringify(mcpTool.inputSchema)),
       });
     });
-
     const viewImage = createViewImageTool(this.mcpClient);
     const allTools = [...wrappedMCPTools, viewImage];
-
     const systemMessage = await this.getSystemMessage(this.mcpClient);
-
     const toolNode = await ToolNode.create(allTools, { handleToolErrors: true });
-
     return { allTools, systemMessage, toolNode };
   }
 
-  // Build the workflow (state graph) using common logic.
   protected buildWorkflow(systemMessage: SystemMessage, toolNode: ToolNode, allTools: any[]): any {
     const callModel = async (state: typeof StateAnnotation.State) => {
+      const logger = Logger.getInstance(); // Get logger instance
       const messages = state.messages;
       const lastMessage = messages[messages.length - 1] as BaseMessage | undefined;
 
       if (lastMessage?.getType() === "ai" && ((lastMessage as AIMessage)?.tool_calls?.length ?? 0) > 0) {
         const lastAiMessage = lastMessage as AIMessage;
         lastAiMessage.tool_calls = [];
-
         if(Array.isArray(lastMessage.content)) {
-          lastAiMessage.content = lastMessage.content.filter((content) => {
-            return content.type === "text";
-          });
+          lastAiMessage.content = lastMessage.content.filter((content) => content.type === "text");
         }
       }
 
-      const filteredMessages = messages.filter((message) => {
-        return typeof message.content === "string" || message.content.length > 0;
+      const filteredMessages = messages.filter(message => {
+        if (typeof message.content === 'string' && message.content.trim().length > 0) return true;
+        if (Array.isArray(message.content) && message.content.length > 0) {
+          return message.content.every(part => part.type === 'text' ? (part as any).text?.trim().length > 0 : true);
+        }
+        return false;
+      });
+
+      if (filteredMessages.length === 0 && messages.length > 0) {
+        await logger.warn('MODEL_CALL', 'All messages were filtered out before model invocation.', { originalCount: messages.length });
+      }
+
+      // Detailed logging before model invocation
+      await logger.debug('MODEL_INVOKE_PRE', 'Preparing to invoke model', {
+        systemMessageContent: systemMessage.content,
+        systemMessageClass: systemMessage.constructor.name,
+        systemMessageId: systemMessage.id,
+        filteredMessagesCount: filteredMessages.length,
+        filteredMessages: filteredMessages.map(m => ({ 
+          className: m.constructor.name, 
+          content: m.content, 
+          id: m.id, 
+          role: (m as any).role, // if available
+          type: m.getType()
+        }))
       });
 
       const response = await this.model.invoke([systemMessage, ...filteredMessages]);
@@ -103,9 +116,7 @@ export abstract class BaseAgent {
     const shouldContinue = (state: typeof StateAnnotation.State) => {
       const messages = state.messages;
       const lastMessage = messages[messages.length - 1] as any;
-      if (lastMessage.tool_calls?.length) {
-        return "tools";
-      }
+      if (lastMessage.tool_calls?.length) return "tools";
       return "__end__";
     };
 
@@ -115,7 +126,6 @@ export abstract class BaseAgent {
       .addEdge("__start__", "agent")
       .addConditionalEdges("agent", shouldContinue)
       .addEdge("tools", "agent");
-
     return workflow.compile();
   }
 
@@ -127,23 +137,16 @@ export abstract class BaseAgent {
         const execAsync = promisify(exec);
         await execAsync(`which ${cmd}`);
         return true;
-      } catch {
-        return false;
-      }
+      } catch { return false; }
     };
-    
-    // Helper function to read /etc/os-release
     const getDistroInfo = async (): Promise<string> => {
       try {
         const fs = require('fs').promises;
         const osRelease = await fs.readFile("/etc/os-release", "utf-8");
         const match = osRelease.match(/^PRETTY_NAME="([^"]*)"/m);
         return match ? match[1] : 'Unknown Distro';
-      } catch {
-        return 'Unknown Distro';
-      }
+      } catch { return 'Unknown Distro'; }
     };
-
     return {
       user: os.userInfo().username,
       OS: `${os.type()} ${os.release()}`,
@@ -167,22 +170,16 @@ export abstract class BaseAgent {
     try {
       const promptData = await this.getBasePromptData(mcpClient);
       const promptResult = await mcpClient.getPrompt("shell-system", promptData);
-
       const baseSystemMessage = SystemMessagePromptTemplate.fromTemplate(
         `${this.getProviderSpecificPrompt()}\n\n{serverInstructions}`
       );
-
-      return await baseSystemMessage.format({
-        serverInstructions: promptResult.messages[0].content.text,
-      });
+      return await baseSystemMessage.format({ serverInstructions: promptResult.messages[0].content.text });
     } catch (error) {
       console.error("Failed to get system prompt:", error);
       return new SystemMessage(this.getProviderSpecificPrompt());
     }
   }
 
-
-  // StreamResponse implementation common to both agents.
   public async *streamResponse(
     input: string,
     options?: { signal?: AbortSignal; previousBuffer?: { role: "human" | "ai"; text: string }[] }
@@ -192,55 +189,35 @@ export abstract class BaseAgent {
       inputLength: input.length,
       hasSignal: !!options?.signal,
       signalAborted: options?.signal?.aborted,
-      hasBuffer: !!options?.previousBuffer
     });
-
     const convState = ConversationState.getInstance();
-
-    // First get the messages from the conversation state - this will finalize buffers
-    const messages = convState.getMessages();
-    await logger.debug('STREAM', 'Retrieved conversation messages', {
-      messageCount: messages.length,
-      messageTypes: messages.map(m => m.getType())
-    });
-
-    // Then add the human input as a complete message.
     convState.addMessage(new HumanMessage({ content: input }));
-    await logger.debug('STREAM', 'Added human message to conversation');
+    await logger.debug('STREAM', 'Added human message to conversation state');
+    const currentMessages = convState.getMessages();
+    await logger.debug('STREAM', 'Retrieved updated conversation messages for graph input', {
+      messageCount: currentMessages.length,
+      messageTypes: currentMessages.map(m => m.getType()),
+      lastMessageContent: currentMessages.length > 0 ? currentMessages[currentMessages.length-1]?.content : "N/A"
+    });
 
     let currentToolId = "";
     let eventCount = 0;
     let lastEventTime = Date.now();
 
     try {
-      await logger.debug('STREAM', 'Beginning to stream events');
+      await logger.debug('STREAM', 'Beginning to stream events from graph');
       for await (const event of this.app.streamEvents(
-        { messages },
-        {
-          version: "v2",
-          recursionLimit: 500,
-          signal: options?.signal,
-        }
+        { messages: currentMessages }, 
+        { version: "v2", recursionLimit: 500, signal: options?.signal }
       )) {
         const now = Date.now();
         eventCount++;
-
-        // Log timing information periodically
         if (eventCount % 20 === 0 || now - lastEventTime > 2000) {
-          await logger.debug('STREAM', 'Stream progress', {
-            eventCount,
-            timeSinceLastEvent: now - lastEventTime,
-            eventType: event.event
-          });
+          await logger.debug('STREAM', 'Stream progress', { eventCount, timeSinceLastEvent: now - lastEventTime, eventType: event.event });
         }
         lastEventTime = now;
-
-        // Check if signal is aborted
         if (options?.signal?.aborted) {
-          await logger.info('STREAM', 'Stream aborted by signal', {
-            reason: options.signal.reason,
-            eventCount
-          });
+          await logger.info('STREAM', 'Stream aborted by signal', { reason: options.signal.reason, eventCount });
           break;
         }
 
@@ -250,58 +227,34 @@ export abstract class BaseAgent {
             hasToolCalls: !!(event.data.output?.tool_calls?.length),
             toolCallCount: event.data.output?.tool_calls?.length || 0
           });
-
           convState.clearBuffers();
           const message = event.data.output as AIMessageChunk;
-
           if(Array.isArray(message.content) && message.content.some(isAnthropicTextContent)) {
             const texts = message.content
-              .map((content) => isAnthropicTextContent(content)
-                ? { type: 'text' as const, content: content.text }
-                : null)
+              .map((content) => isAnthropicTextContent(content) ? { type: 'text' as const, content: content.text } : null)
               .filter((item): item is { type: 'text', content: string } => item !== null);
-
             if (texts.length > 0) {
-              await logger.debug('STREAM', 'Yielding text content', {
-                textCount: texts.length,
-                firstTextLength: texts[0]?.content?.length || 0
-              });
-              yield* texts as MessageEvent[]; // Should only be one, but just in case
+              await logger.debug('STREAM', 'Yielding text content from model_end', { textCount: texts.length });
+              yield* texts as MessageEvent[];
             }
           }
-
           if(typeof message.content === 'string' && message.content.trim().length > 0) {
-            await logger.debug('STREAM', 'Yielding string content', {
-              contentLength: message.content.length
-            });
+            await logger.debug('STREAM', 'Yielding string content from model_end', { contentLength: message.content.length });
             yield { type: 'text', content: message.content } as MessageEvent;
           }
-
           if (message.tool_calls && message.tool_calls.length > 0) {
-            await logger.debug('STREAM', 'Processing tool calls', {
-              toolCallCount: message.tool_calls.length
-            });
+            await logger.debug('STREAM', 'Processing tool calls from model_end', { toolCallCount: message.tool_calls.length });
             for (const toolCall of message.tool_calls) {
-              await logger.debug('STREAM', 'Yielding tool call', {
-                toolName: toolCall.name,
-                toolId: toolCall.id || 'unknown-tool-id'
-              });
+              await logger.debug('STREAM', 'Yielding tool call from model_end', { toolName: toolCall.name, toolId: toolCall.id || 'unknown-tool-id' });
               yield { type: 'tool_call', tool: { ...toolCall, id: toolCall.id ?? 'unknown-tool-id'} } as ToolEvent;
             }
           }
         }
 
         if (event.event !== 'on_chat_model_stream') continue;
-
-        // Periodically log stream progress
-        if (eventCount % 50 === 0) {
-          await logger.debug('STREAM', 'Chat model stream progress', {
-            eventCount
-          });
-        }
+        if (eventCount % 50 === 0) await logger.debug('STREAM', 'Chat model stream progress', { eventCount });
 
         const chunk = event.data.chunk as AIMessageChunk;
-
         if (chunk.content && Array.isArray(chunk.content)) {
           for (const contentItem of chunk.content) {
             if (contentItem.type === 'text' && contentItem.text) {
@@ -318,11 +271,7 @@ export abstract class BaseAgent {
           for (const toolCall of chunk.tool_calls) {
             const toolId = toolCall.id ?? 'unknown-tool-id';
             currentToolId = toolId;
-            convState.addToolCallDelta(toolCall.name + ': ');
-            await logger.debug('STREAM', 'Tool start event', {
-              toolName: toolCall.name,
-              toolId
-            });
+            await logger.debug('STREAM', 'Tool start event from chunk', { toolName: toolCall.name, toolId });
             yield { type: 'tool_start', tool: { name: toolCall.name, id: toolId } } as ToolStartEvent;
           }
         }
@@ -330,29 +279,19 @@ export abstract class BaseAgent {
           for (const toolCallChunk of chunk.tool_call_chunks) {
             if (toolCallChunk.args && currentToolId) {
               convState.addToolCallDelta(toolCallChunk.args);
-              if (eventCount % 30 === 0) {
-                await logger.debug('STREAM', 'Tool input delta', {
-                  toolId: currentToolId,
-                  argsLength: toolCallChunk.args.length
-                });
-              }
+              if (eventCount % 30 === 0) await logger.debug('STREAM', 'Tool input delta', { toolId: currentToolId, argsLength: toolCallChunk.args.length });
               yield { type: 'tool_input_delta', content: toolCallChunk.args, toolId: currentToolId } as ToolInputEvent;
             }
           }
         }
       }
-
-      await logger.debug('STREAM', 'Stream completed successfully', {
-        totalEvents: eventCount
-      });
+      await logger.debug('STREAM', 'Stream completed successfully', { totalEvents: eventCount });
     } catch (error) {
-      await logger.error('STREAM', 'Error in stream processing', {
+      await logger.error('STREAM', 'Error in stream processing', { 
         error: error instanceof Error ? error.stack : String(error),
         eventCount,
         lastEventTime: new Date(lastEventTime).toISOString()
       });
-
-      // Re-throw to allow proper handling in calling code
       throw error;
     }
   }

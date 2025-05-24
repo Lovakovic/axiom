@@ -75,6 +75,8 @@ export class ConversationState {
       this.currentResponseBuffer = "";
     }
     if (this.currentToolCallBuffer.length > 0) {
+      // This is how the application currently stores partial/interrupted tool call intentions
+      // when finalizeBuffers is called (e.g., via getMessages).
       const msg = new AIMessageChunk({ content: `Tool Call: ${this.currentToolCallBuffer}`.trim() });
       this.addMessage(msg);
       this.currentToolCallBuffer = "";
@@ -87,18 +89,32 @@ export class ConversationState {
   }
 
   /**
-   * Returns the complete conversation history
+   * Returns the complete conversation history, finalizing current buffers.
    */
   public getMessages(): BaseMessage[] {
     this.finalizeBuffers();
-    return this.messages;
+    return [...this.messages]; // Return a copy
   }
 
   /**
-   * Clears the conversation state
+   * Clears the conversation state including messages and buffers.
    */
   public clearMessages(): void {
     this.messages = [];
     this.messageIds.clear();
+    this.clearBuffers(); // Ensure buffers are also cleared
+  }
+
+  /**
+   * Returns a snapshot of the current conversation state for debugging.
+   * This includes all finalized messages and the current content of live buffers
+   * without altering them.
+   */
+  public getDebugState(): { messages: BaseMessage[], currentResponseBuffer: string, currentToolCallBuffer: string } {
+    return {
+      messages: [...this.messages], // A copy of the current messages array (reflects past finalizations)
+      currentResponseBuffer: this.currentResponseBuffer, // Current live response buffer
+      currentToolCallBuffer: this.currentToolCallBuffer,   // Current live tool call buffer
+    };
   }
 }

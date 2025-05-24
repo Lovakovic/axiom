@@ -11,14 +11,17 @@ export interface LogEntry {
 }
 
 export interface ILogger {
-  // Public methods that CLI and other components will use
   info(category: string, message: string, metadata?: Record<string, any>): Promise<void>;
   debug(category: string, message: string, metadata?: Record<string, any>): Promise<void>;
   warn(category: string, message: string, metadata?: Record<string, any>): Promise<void>;
   error(category: string, message: string, metadata?: Record<string, any>): Promise<void>;
+  isActive(): boolean;
+  getArchivedLogs(): LogEntry[];
 }
 
-export class Logger implements ILogger{
+const MAX_ARCHIVED_LOGS = 200;
+
+export class Logger implements ILogger {
   private static instance: Logger;
   private readonly logDir: string;
   private readonly currentLogFile: string;
@@ -26,6 +29,7 @@ export class Logger implements ILogger{
   private readonly flushInterval: NodeJS.Timeout | null = null;
   private readonly logLevel: LogEntry['level'] | false;
   private isShuttingDown = false;
+  private recentLogsArchive: LogEntry[] = []; // Added for debug server
 
   private shouldLog(level: LogEntry['level']): boolean {
     if (this.logLevel === false) return false;
@@ -39,21 +43,17 @@ export class Logger implements ILogger{
 
   private constructor() {
     const debugEnv = process.env.DEBUG?.toUpperCase();
-    this.logLevel = (debugEnv === 'FALSE' ? false : 
+    this.logLevel = (debugEnv === 'FALSE' ? false :
       (debugEnv === 'DEBUG' || debugEnv === 'INFO' || debugEnv === 'WARN' || debugEnv === 'ERROR') 
         ? debugEnv as LogEntry['level'] 
-        : 'DEBUG');
+        : 'DEBUG'); // Default to DEBUG if DEBUG is set to anything other than FALSE, INFO, WARN, ERROR
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     this.logDir = path.join(os.homedir(), '.mcp', 'logs');
     this.currentLogFile = path.join(this.logDir, `mcp-${timestamp}.log`);
 
-    // Only set up logging infrastructure if enabled
-    if (this.logLevel !== false) {
-      // Create buffer flush interval
+    if (this.isActive()) {
       this.flushInterval = setInterval(() => this.flushBuffer(), 5000);
-
-      // Setup shutdown handlers
       this.setupShutdownHandlers();
     }
   }
@@ -61,7 +61,9 @@ export class Logger implements ILogger{
   static async init(): Promise<Logger> {
     if (!Logger.instance) {
       Logger.instance = new Logger();
-      await Logger.instance.initializeLogDir();
+      if (Logger.instance.isActive()) {
+        await Logger.instance.initializeLogDir();
+      }
     }
     return Logger.instance;
   }
@@ -71,6 +73,10 @@ export class Logger implements ILogger{
       throw new Error('Logger not initialized. Call Logger.init() first');
     }
     return Logger.instance;
+  }
+
+  public isActive(): boolean {
+    return this.logLevel !== false;
   }
 
   private async initializeLogDir() {
@@ -96,14 +102,17 @@ export class Logger implements ILogger{
     process.on('SIGINT', async () => await cleanup());
     process.on('SIGTERM', async () => await cleanup());
     process.on('uncaughtException', async (error) => {
-      await this.error('UNCAUGHT_EXCEPTION', 'Uncaught exception', { error: error.stack });
+      // Log critical error if possible
+      if (this.isActive()) {
+         await this.error('UNCAUGHT_EXCEPTION', 'Uncaught exception before shutdown', { error: error.stack });
+      }
       await cleanup();
-      process.exit(1);
+      // process.exit(1); // Let the main CLI handler manage exit
     });
   }
 
   private async flushBuffer() {
-    if (this.logBuffer.length === 0) return;
+    if (this.logBuffer.length === 0 || !this.isActive()) return;
 
     const entries = this.logBuffer.splice(0);
     const logContent = entries
@@ -114,7 +123,6 @@ export class Logger implements ILogger{
       await fs.appendFile(this.currentLogFile, logContent, 'utf8');
     } catch (error) {
       console.error('Failed to write to log file:', error);
-      // Re-add entries to buffer if write failed
       this.logBuffer.unshift(...entries);
     }
   }
@@ -132,13 +140,21 @@ export class Logger implements ILogger{
 
     this.logBuffer.push(entry);
 
-    // Flush immediately for errors or if buffer gets too large
+    // Add to recentLogsArchive (circular buffer)
+    this.recentLogsArchive.push(entry);
+    if (this.recentLogsArchive.length > MAX_ARCHIVED_LOGS) {
+      this.recentLogsArchive.shift(); // Remove the oldest entry
+    }
+
     if (level === 'ERROR' || this.logBuffer.length > 1000) {
       await this.flushBuffer();
     }
   }
 
-  // Public logging methods
+  public getArchivedLogs(): LogEntry[] {
+    return [...this.recentLogsArchive]; // Return a copy
+  }
+
   async debug(category: string, message: string, metadata?: Record<string, any>) {
     await this.log('DEBUG', category, message, metadata);
   }
