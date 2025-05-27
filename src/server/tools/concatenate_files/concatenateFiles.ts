@@ -19,6 +19,7 @@ function shouldSkipFile(filePath: string): boolean {
 
 interface ToolParams {
   paths: string[];
+  output_path?: string;
 }
 
 async function processPath(currentPath: string, concatenatedContent: string[]): Promise<void> {
@@ -38,9 +39,8 @@ async function processPath(currentPath: string, concatenatedContent: string[]): 
     }
     try {
       const content = await fs.promises.readFile(currentPath, "utf-8");
-      concatenatedContent.push(`// ${currentPath}\n${content}\n`);
+      concatenatedContent.push(`// ${currentPath}\\n${content}\\n`);
     } catch (error: any) {
-      // Log warning for unreadable files, but continue processing
       console.warn(`Warning: Skipping unreadable or non-UTF-8 file: ${currentPath} (Error: ${error.message})`);
     }
   }
@@ -48,7 +48,7 @@ async function processPath(currentPath: string, concatenatedContent: string[]): 
 
 export const toolDefinition: Tool = {
   name: "concatenate_files",
-  description: "Concatenates specified text files or all text files in specified directories into a single string.",
+  description: "Concatenates specified text files or all text files in specified directories into a single string. Optionally saves to a file.",
   inputSchema: {
     type: "object",
     properties: {
@@ -56,6 +56,10 @@ export const toolDefinition: Tool = {
         type: "array",
         items: {type: "string"},
         description: "An array of file or directory paths to concatenate."
+      },
+      output_path: {
+        type: "string",
+        description: "Optional. Path to save the concatenated content to."
       }
     },
     required: ["paths"]
@@ -63,7 +67,7 @@ export const toolDefinition: Tool = {
 };
 
 export async function concatenateFiles(params: ToolParams): Promise<CallToolResult> {
-  const {paths} = params;
+  const {paths, output_path} = params;
   const concatenatedContent: string[] = [];
 
   if (!paths || paths.length === 0) {
@@ -81,8 +85,33 @@ export async function concatenateFiles(params: ToolParams): Promise<CallToolResu
     try {
       await processPath(p, concatenatedContent);
     } catch (error: any) {
-      // Log error for non-existent paths, but continue processing other paths
       console.error(`Error processing path ${p}: ${error.message}`);
+    }
+  }
+
+  const finalText = concatenatedContent.join("\\n");
+
+  if (output_path) {
+    try {
+      await fs.promises.writeFile(output_path, finalText);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Concatenated content saved to ${output_path}`
+          }
+        ]
+      };
+    } catch (error: any) {
+      console.error(`Error writing to file ${output_path}: ${error.message}`);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error saving to ${output_path}: ${error.message}. Concatenated content: \\n${finalText}`
+          }
+        ]
+      };
     }
   }
 
@@ -90,7 +119,7 @@ export async function concatenateFiles(params: ToolParams): Promise<CallToolResu
     content: [
       {
         type: 'text',
-        text: concatenatedContent.join("\n")
+        text: finalText
       }
     ]
   };
