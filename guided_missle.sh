@@ -50,7 +50,7 @@ Examples:
 Notes:
     - The script automatically skips binary files and common non-text formats
     - Files are processed in the order they are specified
-    - When processing directories, hidden files and node_modules, ${EXCLUDED_DIRS}, are skipped
+    - When processing directories, hidden files, ${EXCLUDED_DIRS}, are skipped
 EOF
 }
 
@@ -107,7 +107,6 @@ process_file() {
     [[ "$base_name" == "$output_file" ]] && return
     [[ "$base_name" == .* ]] && return
     [[ "$dir_name" == *"/."* ]] && return
-#    [[ "$file" == *"node_modules"* ]] && return
 
     # Skip additional excluded directories
     if should_exclude_dir "$dir_name"; then
@@ -147,7 +146,6 @@ process_directory() {
         -not -path '*/.venv/*' \
         -not -path '*/__pycache__/*' \
         -not -path '*/\.*/*' \
-        -not -path '*/node_modules/*' \
         -exec bash -c 'process_file "$0"' {} \;
 }
 
