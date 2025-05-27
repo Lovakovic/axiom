@@ -6,7 +6,6 @@ import {convertJSONSchemaDraft7ToZod} from "../shared/util/draftToZod";
 import {MCPClient} from "./mcp.client";
 import {ToolNode} from "./util/tool-node";
 import {Annotation, messagesStateReducer, StateGraph} from "@langchain/langgraph";
-import {createViewImageTool} from "./local_tools/image.tool";
 import {MessageEvent, StreamEvent, TextStreamEvent, ToolEvent, ToolInputEvent, ToolStartEvent} from "./types";
 import {SystemMessagePromptTemplate} from "@langchain/core/prompts";
 import {MessageContentText} from "@langchain/core/dist/messages/base";
@@ -54,8 +53,7 @@ export abstract class BaseAgent {
         schema: convertJSONSchemaDraft7ToZod(JSON.stringify(mcpTool.inputSchema)),
       });
     });
-    const viewImage = createViewImageTool(this.mcpClient);
-    const allTools = [...wrappedMCPTools, viewImage];
+    const allTools = [...wrappedMCPTools];
     const systemMessage = await this.getSystemMessage(this.mcpClient);
     const toolNode = await ToolNode.create(allTools, { handleToolErrors: true });
     return { allTools, systemMessage, toolNode };
