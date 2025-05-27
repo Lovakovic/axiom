@@ -1,12 +1,11 @@
-import { AIMessage, BaseMessage, isBaseMessage, ToolMessage } from "@langchain/core/messages";
-import { RunnableConfig } from "@langchain/core/runnables";
-import { isCommand, isGraphInterrupt } from "@langchain/langgraph";
-import { StructuredToolInterface } from "@langchain/core/tools";
-import { isLocalTool } from "../local_tools/base";
-import { Logger } from '../../logger';
-import { z, ZodObject, ZodType } from 'zod'; // Added ZodType
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import { StateAnnotation } from "../base";
+import {AIMessage, BaseMessage, isBaseMessage, ToolMessage} from "@langchain/core/messages";
+import {RunnableConfig} from "@langchain/core/runnables";
+import {isCommand, isGraphInterrupt} from "@langchain/langgraph";
+import {StructuredToolInterface} from "@langchain/core/tools";
+import {Logger} from '../../logger';
+import {z, ZodObject, ZodType} from 'zod'; // Added ZodType
+import {zodToJsonSchema} from 'zod-to-json-schema';
+import {StateAnnotation} from "../base";
 import {ToolNodeOptions} from "@langchain/langgraph/prebuilt";
 
 export class ToolNode {
@@ -25,16 +24,6 @@ export class ToolNode {
     name: string;
     id?: string
   }): ToolMessage {
-    if (isLocalTool(tool)) {
-      if (tool.outputFormat.method === 'value') {
-        return new ToolMessage({
-          name: call.name,
-          content: output,
-          tool_call_id: call.id ?? "",
-        });
-      }
-    }
-
     return new ToolMessage({
       name: call.name,
       content: typeof output === "string" ? output : JSON.stringify(output),
@@ -186,6 +175,7 @@ export class ToolNode {
             toolName: call.name,
             toolId: call.id,
             outputType: typeof output,
+            content: output.content,
             isMessage: isBaseMessage(output),
             isCommand: isCommand(output)
           });

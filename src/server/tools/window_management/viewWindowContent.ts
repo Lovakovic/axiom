@@ -87,12 +87,8 @@ async function captureWindowLinux(windowId: string, tempFilePath: string): Promi
         return; // Success, file created
       } catch (statError) {
         lastError = new Error(`import did not create file on DISPLAY ${display ?? 'undefined'}. Stderr: ${stderr || 'none'}. Stdout: ${stdout || 'none'}`);
-        // continue; // Implicitly continues or would be caught by outer try-catch if execPromise itself failed
+        continue; // Ensure we try the next display if file not created
       }
-      // If execPromise didn't throw and stderr wasn't a display error, but file not created.
-      // This might happen if 'import' had a non-fatal error but didn't create the file.
-      // Let the loop continue or rely on execPromise's error for other failure modes.
-
     } catch (error: any) {
       lastError = error;
       if (error.message?.toLowerCase().includes("cannot open display") ||
@@ -101,7 +97,16 @@ async function captureWindowLinux(windowId: string, tempFilePath: string): Promi
         error.stderr?.toLowerCase().includes("no display")) {
         continue;
       }
-      // For other errors, we might not want to continue trying other displays.
+      // If the error is not a display-related one, it might be a more fundamental issue with 'import' or arguments.
+      // In this case, we might not want to continue trying other displays as they would likely fail too.
+      // However, for robustness in finding *a* working display, we could opt to continue.
+      // For now, let's break if it's not a known display error.
+      // Re-evaluating this: if execPromise fails, it's an error for *that specific DISPLAY attempt*.
+      // We should always continue to try other displays unless the error is catastrophic and unrelated to DISPLAY.
+      // The current logic to continue on "cannot open display" is good.
+      // If it's another error type from execPromise, it will be stored in lastError.
+      // If the loop finishes without success, the lastError (which could be from any attempt) is thrown.
+      // This seems reasonable. The key fix was the `continue` after fs.stat failure.
     }
   }
   if (lastError) {
@@ -135,10 +140,7 @@ export async function viewWindowContentHandler(params: ToolParams): Promise<Call
     }
 
     const fileData = await fs.readFile(tempFilePath);
-    const base64Data = fileData.toString("base64");
-
-    console.log(`Captured window content for ID ${window_id} as base64.`);
-    console.log(`Base64 data length: ${base64Data.length}`);
+    const base64Data = fileData.toString("base64")
 
     const imageContent: ImageContent = {
       type: "image",
