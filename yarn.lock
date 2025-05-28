@@ -1673,38 +1673,38 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@langchain/google-common@npm:^0.2.9":
-  version: 0.2.9
-  resolution: "@langchain/google-common@npm:0.2.9"
+"@langchain/google-common@npm:^0.2.10":
+  version: 0.2.10
+  resolution: "@langchain/google-common@npm:0.2.10"
   dependencies:
     uuid: "npm:^10.0.0"
     zod-to-json-schema: "npm:^3.22.4"
   peerDependencies:
     "@langchain/core": ">=0.3.55 <0.4.0"
-  checksum: 10c0/b5fcc3c4140e5c628d6c8e1c7a1f024b7c27f924868ba88d20722ff6f1886a1bfdc34bf394e76f3d3f91267e768e47893724238b9e020c75e60b56dbb7facfab
+  checksum: 10c0/7cd0a9a46bdb4d3f952b8df0279f441645b98f84e3107afd4a5910dbfdccc5684f1e917e57f02a170354652c38d9e984e035b9b135167e567d77e19a8660ac7c
   languageName: node
   linkType: hard
 
-"@langchain/google-gauth@npm:^0.2.9":
-  version: 0.2.9
-  resolution: "@langchain/google-gauth@npm:0.2.9"
+"@langchain/google-gauth@npm:^0.2.10":
+  version: 0.2.10
+  resolution: "@langchain/google-gauth@npm:0.2.10"
   dependencies:
-    "@langchain/google-common": "npm:^0.2.9"
+    "@langchain/google-common": "npm:^0.2.10"
     google-auth-library: "npm:^9.15.1"
   peerDependencies:
     "@langchain/core": ">=0.3.55 <0.4.0"
-  checksum: 10c0/9f29de8ef4dbaf80a361e1d16cdc1186da04865b3153bcb11e76337edefdb4b5a2d202aaf7c688b2ee508e1cbc022df268e24f76e39433df81527b40c7cf180f
+  checksum: 10c0/3564ec854705beef5af3151067094cac8779c6f13e57cd8ef0ee61a030e14474a4088e106bebcfe5e58e70d55018d16d1c29c409c508552e344dc352a73bf707
   languageName: node
   linkType: hard
 
-"@langchain/google-vertexai@npm:^0.2.9":
-  version: 0.2.9
-  resolution: "@langchain/google-vertexai@npm:0.2.9"
+"@langchain/google-vertexai@npm:^0.2.10":
+  version: 0.2.10
+  resolution: "@langchain/google-vertexai@npm:0.2.10"
   dependencies:
-    "@langchain/google-gauth": "npm:^0.2.9"
+    "@langchain/google-gauth": "npm:^0.2.10"
   peerDependencies:
     "@langchain/core": ">=0.3.55 <0.4.0"
-  checksum: 10c0/4f1cb4668c7d6af741e741e19dd10d5adb5b0f48743f7dfa9c1d942b8c5da34c93c1469c13a60d3248cb4ce3e8a33f18e0d345c41a64648e259dc7ba8e08ce43
+  checksum: 10c0/f678147f49c42e99ae8c29bac524a34444f7073267e6d1828029fdc705c025d63c56659c5dd60ddb5e6ae104a9abcd5d4caa232d6f6f4f8b384b197632c41189
   languageName: node
   linkType: hard
 
@@ -4628,7 +4628,7 @@ __metadata:
     "@jest/globals": "npm:^29.7.0"
     "@langchain/anthropic": "npm:^0.3.20"
     "@langchain/core": "npm:^0.3.55"
-    "@langchain/google-vertexai": "npm:^0.2.9"
+    "@langchain/google-vertexai": "npm:^0.2.10"
     "@langchain/langgraph": "npm:^0.2.72"
     "@langchain/openai": "npm:^0.5.10"
     "@modelcontextprotocol/sdk": "npm:^1.1.1"
