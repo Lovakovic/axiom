@@ -1,16 +1,16 @@
 import dotenv from "dotenv";
 import os from "os";
-import {AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage} from "@langchain/core/messages";
-import {DynamicStructuredTool} from "@langchain/core/tools";
-import {convertJSONSchemaDraft7ToZod} from "../shared/util/draftToZod";
-import {MCPClient} from "./mcp.client";
-import {ToolNode} from "./util/tool-node";
-import {Annotation, messagesStateReducer, StateGraph} from "@langchain/langgraph";
-import {MessageEvent, StreamEvent, TextStreamEvent, ToolEvent, ToolInputEvent, ToolStartEvent} from "./types";
-import {SystemMessagePromptTemplate} from "@langchain/core/prompts";
-import {MessageContentText} from "@langchain/core/dist/messages/base";
-import {ConversationState} from "./state/conversation.state";
-import {Logger} from "../logger";
+import { AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { DynamicStructuredTool } from "@langchain/core/tools";
+import { convertJSONSchemaDraft7ToZod } from "../shared/util/draftToZod";
+import { MCPClient } from "./mcp.client";
+import { ToolNode } from "./util/tool-node";
+import { Annotation, messagesStateReducer, StateGraph } from "@langchain/langgraph";
+import { MessageEvent, StreamEvent, TextStreamEvent, ToolEvent, ToolInputEvent, ToolStartEvent } from "./types";
+import { SystemMessagePromptTemplate } from "@langchain/core/prompts";
+import { MessageContentText } from "@langchain/core/dist/messages/base";
+import { ConversationState } from "./state/conversation.state";
+import { Logger } from "../logger";
 
 dotenv.config();
 
@@ -41,7 +41,20 @@ export abstract class BaseAgent {
         description: mcpTool.description ?? "",
         func: async (args: Record<string, unknown>) => {
           try {
-            return (await this.mcpClient.executeTool(mcpTool.name, args)).content;
+            const content = (await this.mcpClient.executeTool(mcpTool.name, args)).content;
+            return content.map((item) => {
+              // Map MCP's image content to LangChain's image_url format
+              if (item.type === 'image') {
+                return {
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:${item.mimeType};base64,${item.data}`,
+                  }
+                }
+              }
+              return item;
+            });
+
           } catch (error) {
             if (error instanceof Error && error.message?.includes("Connection closed")) {
               return "Tool execution was interrupted.";

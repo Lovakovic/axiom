@@ -3,7 +3,7 @@ import {RunnableConfig} from "@langchain/core/runnables";
 import {isCommand, isGraphInterrupt} from "@langchain/langgraph";
 import {StructuredToolInterface} from "@langchain/core/tools";
 import {Logger} from '../../logger';
-import {z, ZodObject, ZodType} from 'zod'; // Added ZodType
+import {z, ZodObject, ZodType} from 'zod';
 import {zodToJsonSchema} from 'zod-to-json-schema';
 import {StateAnnotation} from "../base";
 import {ToolNodeOptions} from "@langchain/langgraph/prebuilt";
@@ -14,7 +14,7 @@ export class ToolNode {
   private static logger: Logger;
 
   static async create(tools: StructuredToolInterface[], options?: ToolNodeOptions) {
-    ToolNode.logger = await Logger.init(); // Ensure logger is initialized if not already
+    ToolNode.logger = await Logger.init();
     ToolNode.tools = tools;
     ToolNode.handleToolErrors = options?.handleToolErrors ?? true;
     return new ToolNode();
@@ -149,7 +149,7 @@ export class ToolNode {
         try {
           if ('schema' in tool && tool.schema instanceof ZodObject) {
             const zodSchema = tool.schema as ZodObject<any>;
-            if (Object.keys(zodSchema.shape).length === 0) { // Schema is z.object({})
+            if (Object.keys(zodSchema.shape).length === 0) {
               if (call.args === undefined || call.args === null) {
                 call.args = {};
                 await ToolNode.logger.debug('TOOL_NODE', `Normalized undefined/null call.args to {} for tool '${call.name}'`, { toolId: call.id });
