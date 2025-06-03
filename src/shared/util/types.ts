@@ -1,17 +1,18 @@
 import { ZodAny, ZodArray, ZodBoolean, ZodEnum, ZodNull, ZodNumber, ZodObject, ZodOptional, ZodString, ZodTypeAny } from 'zod';
 
 export type JSONSchemaDraft7Property =
-  | { type: 'string'; description?: string; enum?: string[] }
-  | { type: 'number'; description?: string; enum?: string[] }
-  | { type: 'boolean'; description?: string; enum?: string[] }
-  | { type: 'null'; description?: string; enum?: string[] }
-  | { type: 'object'; description?: string; enum?: string[]; properties: Record<string, JSONSchemaDraft7Property>; required?: string[] }
-  | { type: 'array'; description?: string; enum?: string[]; items: JSONSchemaDraft7Property };
+  | { type: 'string'; description?: string; enum?: string[]; [key: string]: any; }
+  | { type: 'number'; description?: string; enum?: string[]; [key: string]: any; }
+  | { type: 'boolean'; description?: string; enum?: string[]; [key: string]: any; }
+  | { type: 'null'; description?: string; enum?: string[]; [key: string]: any; }
+  | { type: 'object'; description?: string; enum?: string[]; properties: Record<string, JSONSchemaDraft7Property>; required?: string[]; [key: string]: any; }
+  | { type: 'array'; description?: string; enum?: string[]; items: JSONSchemaDraft7Property; [key: string]: any; };
 
 export interface JSONSchemaDraft7 {
   type: 'object';
   properties: Record<string, JSONSchemaDraft7Property>;
   required?: string[];
+  [key: string]: any;
 }
 
 export type ZodSchemaProps = Record<string, ZodTypeAny>;
