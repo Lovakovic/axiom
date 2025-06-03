@@ -2,17 +2,11 @@ import {AIMessage, BaseMessage, isBaseMessage, ToolMessage} from "@langchain/cor
 import {RunnableConfig} from "@langchain/core/runnables";
 import {isCommand, isGraphInterrupt} from "@langchain/langgraph";
 import {StructuredToolInterface} from "@langchain/core/tools";
-import {isLocalTool} from "../local_tools/base";
 import {Logger} from '../../logger';
-import {z} from 'zod';
+import {z, ZodObject, ZodType} from 'zod';
 import {zodToJsonSchema} from 'zod-to-json-schema';
 import {StateAnnotation} from "../base";
-
-export type ToolNodeOptions = {
-  name?: string;
-  tags?: string[];
-  handleToolErrors?: boolean;
-};
+import {ToolNodeOptions} from "@langchain/langgraph/prebuilt";
 
 export class ToolNode {
   private static tools: StructuredToolInterface[] = [];
@@ -30,16 +24,6 @@ export class ToolNode {
     name: string;
     id?: string
   }): ToolMessage {
-    if (isLocalTool(tool)) {
-      if (tool.outputFormat.method === 'value') {
-        return new ToolMessage({
-          name: call.name,
-          content: output,
-          tool_call_id: call.id ?? "",
-        });
-      }
-    }
-
     return new ToolMessage({
       name: call.name,
       content: typeof output === "string" ? output : JSON.stringify(output),
@@ -54,13 +38,20 @@ export class ToolNode {
   ): ToolMessage {
     let content = `Error: ${error.message}\n\n`;
 
-    if (tool?.schema instanceof z.ZodObject) {
-      const jsonSchema = zodToJsonSchema(tool.schema, call.name);
-      content += `Expected schema:\n${JSON.stringify(jsonSchema, null, 2)}\n\n`;
-      content += `Please retry the tool call with arguments that match this schema.`;
-    } else {
-      content += `Please ensure your tool call arguments match the required schema.`;
+    if (tool?.schema) {
+      let jsonSchema: object | null = null;
+      if (tool.schema instanceof ZodType) {
+        jsonSchema = zodToJsonSchema(tool.schema, call.name);
+      } else if (typeof tool.schema === 'object') {
+        // Assuming it's already a JSON schema-like object
+        jsonSchema = tool.schema;
+      }
+
+      if (jsonSchema) {
+        content += `Expected schema:\n${JSON.stringify(jsonSchema, null, 2)}\n\n`;
+      }
     }
+    content += `Please retry the tool call with arguments that match this schema.`;
 
     return new ToolMessage({
       name: call.name,
@@ -69,82 +60,46 @@ export class ToolNode {
     });
   }
 
-  private static async validateToolInput(tool: StructuredToolInterface, call: { name: string; args: any; id?: string }, message: AIMessage) {
-    try {
-      await ToolNode.logger.debug('TOOL_NODE', 'Validating tool input', {
-        toolName: call.name,
-        toolId: call.id,
-        originalArgs: call.args
-      });
+  private static async validateToolInput(tool: StructuredToolInterface | undefined, call: { name: string; args: any; id?: string }, message: AIMessage): Promise<void> {
+    if (!tool || !('schema' in tool && tool.schema instanceof z.ZodObject)) {
+      return; // Bypass if tool or ZodObject schema is not available for this specific validation.
+    }
 
-      // For empty or undefined args, modify both tool_calls and content
-      if (!call.args || Object.keys(call.args).length === 0) {
-        const selfReflectionArgs = {
-          __reasoning: "I notice I called this tool but might have failed to provide the required arguments. This could be a mistake in my tool usage. I should review the tool's schema and provide all necessary arguments.",
-        };
+    const zodSchema = tool.schema as z.ZodObject<any>;
+    const schemaShapeKeys = Object.keys(zodSchema.shape);
+    const schemaExpectsProperties = schemaShapeKeys.length > 0;
 
-        // Find and modify the original tool call in the message
-        const originalToolCall = message.tool_calls?.find(tc => tc.id === call.id);
-        if (originalToolCall) {
-          originalToolCall.args = selfReflectionArgs;
+    // If the schema expects properties but the call provides no arguments (or an empty object),
+    // add self-reflection details to the AIMessage for the LLM's learning.
+    // This does not block the tool call itself; Zod parsing during tool.invoke will handle actual validation.
+    if (schemaExpectsProperties && (!call.args || (typeof call.args === 'object' && Object.keys(call.args).length === 0))) {
+      const selfReflectionArgs = {
+        __reasoning: `I attempted to call the tool '${call.name}' but may have missed providing the required arguments. I should review the tool's schema and ensure all necessary arguments are included.`,
+        __expectedSchemaProperties: schemaShapeKeys,
+      };
 
-          // Update our local reference to match
-          call.args = selfReflectionArgs;
-
-          // Find and update the corresponding tool_use content
-          if (Array.isArray(message.content)) {
-            const toolUseContent = message.content.find(
-              content =>
-                typeof content === 'object' &&
-                'type' in content &&
-                content.type === 'tool_use' &&
-                'id' in content &&
-                content.id === call.id
-            );
-
-            if (toolUseContent && typeof toolUseContent === 'object') {
-              // Update the input field with stringified self-reflection args
-              (toolUseContent as any).input = JSON.stringify(selfReflectionArgs);
-            }
-          }
-        }
-
-        await ToolNode.logger.warn('TOOL_NODE', 'Empty arguments detected, adding self-reflection', {
-          toolName: call.name,
-          toolId: call.id,
-          modifiedArgs: call.args
-        });
-
-        return false;
+      // Modify the tool_calls array in the AIMessage
+      const originalToolCallInMessage = message.tool_calls?.find(tc => tc.id === call.id);
+      if (originalToolCallInMessage) {
+        originalToolCallInMessage.args = selfReflectionArgs; // Update args in the tool_calls array
       }
 
-      // For DynamicStructuredTool, validate against its schema
-      if ('schema' in tool && tool.schema instanceof z.ZodObject) {
-        await tool.schema.parseAsync(call.args);
-        return true;
-      }
-      return true;
-    } catch (error) {
-      // Corrected logic:
-      let schemaForLogging: object | null = null;
-      if (tool.schema) {
-        if (tool.schema instanceof z.ZodType) {
-          // tool.schema is a Zod schema, so we can convert it
-          schemaForLogging = zodToJsonSchema(tool.schema, call.name);
-        } else {
-          // This is already in a JSON schema format, so we can use it directly.
-          schemaForLogging = tool.schema;
+      // Also update the 'input' field in the AIMessage's content if it's structured tool_use
+      if (Array.isArray(message.content)) {
+        const toolUseContent = message.content.find(
+          content => typeof content === 'object' && (content as any).type === 'tool_use' && (content as any).id === call.id
+        );
+        if (toolUseContent && typeof toolUseContent === 'object') {
+          (toolUseContent as any).input = JSON.stringify(selfReflectionArgs); // Update input in content array
         }
       }
 
-      await ToolNode.logger.warn('TOOL_NODE', 'Tool input validation failed', {
+      await ToolNode.logger.warn('TOOL_NODE', 'Missing arguments for tool expecting properties. Self-reflection added to AIMessage.', {
         toolName: call.name,
         toolId: call.id,
-        error: error instanceof Error ? error.message : String(error),
-        providedArgs: call.args,
-        schema: schemaForLogging // Use the correctly processed schema
+        expectedProperties: schemaShapeKeys,
+        modifiedAiMessageArgs: selfReflectionArgs
       });
-      return false;
     }
   }
 
@@ -158,11 +113,10 @@ export class ToolNode {
 
     const tool_calls = (message as AIMessage).tool_calls;
     if (!tool_calls) {
-      await ToolNode.logger.debug('TOOL_NODE', 'No tool calls found in message');
-      return {messages: []};
+      await ToolNode.logger.debug('TOOL_NODE', 'No tool calls found in AIMessage');
+      return { messages: [] };
     }
 
-    // Add validation for tool call IDs
     const missingIds = tool_calls.filter(call => !call.id);
     if (missingIds.length > 0) {
       await ToolNode.logger.error('TOOL_NODE', 'Tool calls missing IDs', {
@@ -184,23 +138,27 @@ export class ToolNode {
         const tool = ToolNode.tools.find((t) => t.name === call.name);
 
         if (!tool) {
-          const error = `Tool "${call.name}" not found`;
-          await ToolNode.logger.error('TOOL_NODE', error, {
+          const errorMsg = `Tool "${call.name}" not found`;
+          await ToolNode.logger.error('TOOL_NODE', errorMsg, {
             requestedTool: call.name,
             availableTools: ToolNode.tools.map(t => t.name)
           });
-          return ToolNode.createErrorToolMessage({name: call.name, id: call.id!}, new Error(error));
+          return ToolNode.createErrorToolMessage({ name: call.name, id: call.id! }, new Error(errorMsg));
         }
 
         try {
-          // Validate tool input before execution, passing the original message
-          const isValid = await ToolNode.validateToolInput(tool, call, message);
-          if (!isValid) {
-            return ToolNode.createErrorToolMessage({
-              name: call.name,
-              id: call.id!
-            }, new Error('Invalid tool arguments'), tool);
+          if ('schema' in tool && tool.schema instanceof ZodObject) {
+            const zodSchema = tool.schema as ZodObject<any>;
+            if (Object.keys(zodSchema.shape).length === 0) {
+              if (call.args === undefined || call.args === null) {
+                call.args = {};
+                await ToolNode.logger.debug('TOOL_NODE', `Normalized undefined/null call.args to {} for tool '${call.name}'`, { toolId: call.id });
+              }
+            }
           }
+
+          // Perform self-reflection modification on the AIMessage if applicable
+          await ToolNode.validateToolInput(tool, call, message as AIMessage);
 
           await ToolNode.logger.debug('TOOL_NODE', 'Executing tool', {
             toolName: call.name,
@@ -209,7 +167,7 @@ export class ToolNode {
           });
 
           const output = await tool.invoke(
-            {...call, type: "tool_call"},
+            { ...call, type: "tool_call" }, // 'args' is already part of 'call'
             config
           );
 
@@ -217,6 +175,7 @@ export class ToolNode {
             toolName: call.name,
             toolId: call.id,
             outputType: typeof output,
+            content: output.content,
             isMessage: isBaseMessage(output),
             isCommand: isCommand(output)
           });
@@ -224,7 +183,6 @@ export class ToolNode {
           if (isBaseMessage(output) && output.getType() === "tool") {
             return output;
           }
-
           return ToolNode.createToolMessage(tool, output, call);
         } catch (e: any) {
           await ToolNode.logger.error('TOOL_NODE', `Error executing tool ${call.name}`, {
@@ -234,15 +192,10 @@ export class ToolNode {
             arguments: call.args
           });
 
-          if (!ToolNode.handleToolErrors) {
-            throw e;
-          }
-          if (isGraphInterrupt(e.name)) {
-            throw e;
-          }
+          if (!ToolNode.handleToolErrors) throw e;
+          if (isGraphInterrupt(e.name)) throw e;
 
-          // Create a tool message with the error instead of throwing
-          return ToolNode.createErrorToolMessage({name: call.name, id: call.id!}, e, tool);
+          return ToolNode.createErrorToolMessage({ name: call.name, id: call.id! }, e, tool);
         }
       })
     );
@@ -250,9 +203,9 @@ export class ToolNode {
     if (!outputs.some(isCommand)) {
       await ToolNode.logger.debug('TOOL_NODE', 'All tool executions completed', {
         numOutputs: outputs.length,
-        outputTypes: outputs.map(o => typeof o)
+        outputTypes: outputs.map(o => (o as any)?.constructor?.name ?? typeof o)
       });
-      return {messages: outputs};
+      return { messages: outputs as BaseMessage[] };
     }
 
     await ToolNode.logger.debug('TOOL_NODE', 'Processing command outputs', {
@@ -261,7 +214,7 @@ export class ToolNode {
     });
 
     return {
-      messages: outputs
-    }
+      messages: outputs as BaseMessage[]
+    };
   }
 }

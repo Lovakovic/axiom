@@ -7,11 +7,10 @@ import { Runnable } from "@langchain/core/runnables";
 import { BaseLanguageModelInput } from "@langchain/core/dist/language_models/base";
 import { AIMessageChunk } from "@langchain/core/messages";
 
-dotenv.config(); // Ensures .env (and GOOGLE_APPLICATION_CREDENTIALS if set there) is loaded
+dotenv.config();
 
 export class VertexAI extends BaseAgent {
   protected getProviderSpecificPrompt(): string {
-    // Using a prompt similar to Anthropic's for safety and succinctness with Gemini.
     return GEMINI_SYSTEM_PROMPT;
   }
 
@@ -20,15 +19,12 @@ export class VertexAI extends BaseAgent {
       model: "gemini-2.5-pro-preview-05-06",
       temperature: 0,
       streaming: true,
-      maxRetries: 2,   // Sensible default from LangChain examples
-      // Location might be needed for specific models/features, but gemini-2.5-pro-preview is often global.
-      // The SDK handles authentication via GOOGLE_APPLICATION_CREDENTIALS env var.
+      maxRetries: 2,
     }).bindTools(allTools);
   }
 
   public static async init(mcpClient: MCPClient): Promise<VertexAI> {
     if (!process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      // Making this a hard requirement for this application's logic for consistency
       throw new Error(
         "GOOGLE_APPLICATION_CREDENTIALS environment variable is not set. " +
         "VertexAI (Gemini) agent cannot be initialized. Ensure it's set to the path of your service account key file."
