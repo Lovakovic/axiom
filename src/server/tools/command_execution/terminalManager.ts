@@ -1,7 +1,7 @@
 import { spawn, ChildProcess, SpawnOptions } from 'child_process';
 import os from 'os';
 
-const DEFAULT_INITIAL_TIMEOUT = 2000;
+const DEFAULT_INITIAL_TIMEOUT = 10000; // Changed from 2000 to 10000
 
 export interface TerminalSession {
   pid: number;

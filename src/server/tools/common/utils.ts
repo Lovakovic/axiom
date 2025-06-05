@@ -129,5 +129,5 @@ export const PATH_GUIDANCE = `IMPORTANT: Always use absolute paths (starting wit
 export const CMD_PREFIX_DESCRIPTION = `This tool interacts with the user's local desktop environment.`;
 
 // Default limits if not provided by agent or config
-export const DEFAULT_FILE_READ_LINE_LIMIT = 1000;
-export const DEFAULT_FILE_WRITE_LINE_LIMIT = 50;
+export const DEFAULT_FILE_READ_LINE_LIMIT = 5000;
+export const DEFAULT_FILE_WRITE_LINE_LIMIT = 2500;

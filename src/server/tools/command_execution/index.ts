@@ -28,7 +28,7 @@ ${CMD_PREFIX_DESCRIPTION}`,
 // Handler still uses Zod-parsed args for type safety
 export async function executeCommandHandler(args: z.infer<typeof ExecuteCommandArgsSchema>): Promise<CallToolResult> {
   // Default values for optional params if not provided and not handled by Zod .default()
-  const timeoutMs = args.timeout_ms ?? 2000;
+  const timeoutMs = args.timeout_ms ?? 10000; // Changed from 2000 to 10000
   const shell = args.shell; // undefined if not provided
   const cwd = args.cwd; // undefined if not provided
 
