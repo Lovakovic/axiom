@@ -10,6 +10,10 @@ import { AIMessageChunk } from "@langchain/core/messages";
 dotenv.config();
 
 export class OpenAI extends BaseAgent {
+  protected getProviderKey(): string {
+    return "openai";
+  }
+
   protected getProviderSpecificPrompt(): string {
     return PROMPT;
   }

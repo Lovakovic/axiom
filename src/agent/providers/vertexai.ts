@@ -10,6 +10,10 @@ import { AIMessageChunk } from "@langchain/core/messages";
 dotenv.config();
 
 export class VertexAI extends BaseAgent {
+  protected getProviderKey(): string {
+    return "gemini";
+  }
+
   protected getProviderSpecificPrompt(): string {
     return GEMINI_SYSTEM_PROMPT;
   }

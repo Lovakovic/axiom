@@ -11,6 +11,7 @@ import { SystemMessagePromptTemplate } from "@langchain/core/prompts";
 import { MessageContentText } from "@langchain/core/dist/messages/base";
 import { ConversationState } from "./state/conversation.state";
 import { Logger } from "../logger";
+import { prepareMessagesForProvider } from "./util/content-filter";
 
 dotenv.config();
 
@@ -32,6 +33,8 @@ export abstract class BaseAgent {
   }
 
   protected abstract createModel(allTools: any[]): any;
+  
+  protected abstract getProviderKey(): string;
 
   protected async commonSetup(): Promise<{ allTools: any[]; systemMessage: SystemMessage; toolNode: any }> {
     const tools = await this.mcpClient.getTools();
@@ -85,7 +88,10 @@ export abstract class BaseAgent {
         }
       }
 
-      const filteredMessages = messages.filter(message => {
+      // First filter out provider-specific content (like Anthropic's thinking content)
+      const providerFilteredMessages = prepareMessagesForProvider(messages, this.getProviderKey());
+      
+      const filteredMessages = providerFilteredMessages.filter(message => {
         if (message.getType() === 'ai' && (message as AIMessage).tool_calls && (message as AIMessage).tool_calls!.length > 0) {
           return true;
         }
