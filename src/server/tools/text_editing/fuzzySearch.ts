@@ -60,41 +60,87 @@ export function findBestFuzzyMatch(text: string, query: string): FuzzyMatchResul
   return bestMatch;
 }
 
-export function getSimilarityRatio(a: string, b: string): number {
-  const maxLength = Math.max(a.length, b.length);
-  if (maxLength === 0) return 1.0; // Both empty
-  const dist = distance(a, b);
-  return 1.0 - (dist / maxLength);
-}
-
 /**
  * Generates a character-level diff using standard {-removed-}{+added+} format.
- * This is a simplified diff to highlight differences.
+ * This implementation uses a Longest Common Subsequence (LCS) based algorithm
+ * to provide a detailed, character-by-character diff.
+ * @param expected The original string.
+ * @param actual The new string.
+ * @returns A formatted string highlighting the differences.
  */
 export function highlightDifferences(expected: string, actual: string): string {
-  // Simple placeholder diff for now. A more sophisticated algorithm (e.g., Myers diff)
-  // would be better for complex changes but is harder to implement briefly.
-  // This basic version just shows common prefix/suffix and the differing middle parts.
-
-  let prefixLength = 0;
-  const minLength = Math.min(expected.length, actual.length);
-  while (prefixLength < minLength && expected[prefixLength] === actual[prefixLength]) {
-    prefixLength++;
+  if (expected === actual) {
+    return `${expected} (Exact match)`;
   }
 
-  let suffixLength = 0;
-  while (suffixLength < minLength - prefixLength &&
-  expected[expected.length - 1 - suffixLength] === actual[actual.length - 1 - suffixLength]) {
-    suffixLength++;
+  // 1. Build the LCS length table (DP table)
+  const M = expected.length;
+  const N = actual.length;
+  const dp = Array(M + 1).fill(null).map(() => Array(N + 1).fill(0));
+
+  for (let i = 1; i <= M; i++) {
+    for (let j = 1; j <= N; j++) {
+      if (expected[i - 1] === actual[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
   }
 
-  const commonPrefix = expected.substring(0, prefixLength);
-  const commonSuffix = expected.substring(expected.length - suffixLength);
+  // 2. Backtrack from the end of the DP table to build the diff
+  let i = M;
+  let j = N;
+  const diffParts: { type: 'add' | 'remove' | 'common', text: string }[] = [];
 
-  const expectedDiffPart = expected.substring(prefixLength, expected.length - suffixLength);
-  const actualDiffPart = actual.substring(prefixLength, actual.length - suffixLength);
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && expected[i - 1] === actual[j - 1]) {
+      // Common character
+      diffParts.push({ type: 'common', text: expected[i - 1] });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      // Character added in 'actual'
+      diffParts.push({ type: 'add', text: actual[j - 1] });
+      j--;
+    } else if (i > 0 && (j === 0 || dp[i][j - 1] < dp[i - 1][j])) {
+      // Character removed from 'expected'
+      diffParts.push({ type: 'remove', text: expected[i - 1] });
+      i--;
+    }
+  }
 
-  if (expectedDiffPart === "" && actualDiffPart === "") return `${commonPrefix}${commonSuffix} (Exact match)`;
+  diffParts.reverse();
 
-  return `${commonPrefix}{-${expectedDiffPart}-}{+${actualDiffPart}+}${commonSuffix}`;
+  // 3. Merge consecutive parts of the same type
+  if (diffParts.length === 0) {
+    if (expected.length > 0) return `{-${expected}-}`;
+    if (actual.length > 0) return `{+${actual}+}`;
+    return "";
+  }
+
+  const mergedParts: { type: 'add' | 'remove' | 'common', text: string }[] = [];
+  let currentPart = { ...diffParts[0] };
+
+  for (let k = 1; k < diffParts.length; k++) {
+    if (diffParts[k].type === currentPart.type) {
+      currentPart.text += diffParts[k].text;
+    } else {
+      mergedParts.push(currentPart);
+      currentPart = { ...diffParts[k] };
+    }
+  }
+  mergedParts.push(currentPart);
+
+  // 4. Format the final string
+  return mergedParts.map(part => {
+    switch (part.type) {
+      case 'common':
+        return part.text;
+      case 'add':
+        return `{+${part.text}+}`;
+      case 'remove':
+        return `{-${part.text}-}`;
+    }
+  }).join('');
 }

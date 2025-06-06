@@ -2,8 +2,8 @@ import { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { terminalManager } from "./terminalManager";
 import {
-  executeCommandJSONSchema, // Use JSON Schema for definition
-  ExecuteCommandArgsSchema,   // Use Zod Schema for handler type
+  executeCommandJSONSchema,
+  ExecuteCommandArgsSchema,
   readOutputJSONSchema,
   ReadOutputArgsSchema,
   forceTerminateJSONSchema,
@@ -18,8 +18,8 @@ export const executeCommandToolDefinition: Tool = {
   name: "execute_command",
   description: `
 Execute a shell command.
-Returns a Process ID (PID) and initial output.
-If the command doesn't complete quickly, 'isBlocked' will be true, and you should use 'read_output' to get further output or 'force_terminate' to stop it.
+By default, it returns a Process ID (PID) and initial output. If the command doesn't complete quickly, 'isBlocked' will be true, and you should use 'read_output' to get further output or 'force_terminate' to stop it.
+Use the 'await_completion: true' option to wait for the command to finish and get the full output and exit code directly.
 ${PATH_GUIDANCE} (If your command involves file paths)
 ${CMD_PREFIX_DESCRIPTION}`,
   inputSchema: executeCommandJSONSchema // Corrected
@@ -28,11 +28,12 @@ ${CMD_PREFIX_DESCRIPTION}`,
 // Handler still uses Zod-parsed args for type safety
 export async function executeCommandHandler(args: z.infer<typeof ExecuteCommandArgsSchema>): Promise<CallToolResult> {
   // Default values for optional params if not provided and not handled by Zod .default()
-  const timeoutMs = args.timeout_ms ?? 10000; // Changed from 2000 to 10000
+  const timeoutMs = args.timeout_ms ?? 10000;
   const shell = args.shell; // undefined if not provided
   const cwd = args.cwd; // undefined if not provided
+  const awaitCompletion = args.await_completion ?? false;
 
-  const result = await terminalManager.executeCommand(args.command, timeoutMs, shell, cwd);
+  const result = await terminalManager.executeCommand(args.command, timeoutMs, shell, cwd, awaitCompletion);
 
   if (result.error || result.pid === -1) {
     return {
@@ -41,14 +42,28 @@ export async function executeCommandHandler(args: z.infer<typeof ExecuteCommandA
     };
   }
 
+  if (awaitCompletion) {
+    // Case 1: Command was awaited and has now completed.
+    let outputText = `Command PID ${result.pid} completed with exit code ${result.exitCode}.`;
+    if (result.initialOutput) { // This field now contains the FULL output.
+      outputText += `\nOutput:\n${result.initialOutput}`;
+    }
+    return {
+      content: [{ type: 'text', text: outputText }]
+    };
+  }
+
+  // Case 2: Command was not awaited.
   let outputText = `Command started with PID ${result.pid}.`;
   if (result.initialOutput) {
     outputText += `\nInitial output:\n${result.initialOutput}`;
   }
   if (result.isBlocked) {
+    // Case 2a: Timed out, now running in the background.
     outputText += '\nCommand is still running. Use read_output to get more output or force_terminate to stop it.';
   } else {
-    outputText += '\nCommand finished or yielded all initial output quickly.';
+    // Case 2b: Finished quickly (before the timeout).
+    outputText += `\nCommand finished quickly with exit code ${result.exitCode}.`;
   }
 
   return {

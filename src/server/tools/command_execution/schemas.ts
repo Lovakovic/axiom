@@ -7,7 +7,11 @@ export const executeCommandJSONSchema: JSONSchemaDraft7 = {
     command: {type: "string", description: "The command to execute."},
     timeout_ms: {
       type: "number",
-      description: "Initial timeout in milliseconds to wait for the command to potentially complete or yield first output. If it times out, it's considered a long-running command."
+      description: "Initial timeout in milliseconds to wait for the command to potentially complete or yield first output. If it times out, it's considered a long-running command. This is ignored if 'await_completion' is true."
+    },
+    await_completion: {
+      type: "boolean",
+      description: "If true, the tool will wait for the command to finish completely before returning, ignoring 'timeout_ms'. The full output and exit code will be returned."
     },
     shell: {
       type: "string",

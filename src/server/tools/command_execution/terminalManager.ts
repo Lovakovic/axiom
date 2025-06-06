@@ -1,7 +1,7 @@
 import { spawn, ChildProcess, SpawnOptions } from 'child_process';
 import os from 'os';
 
-const DEFAULT_INITIAL_TIMEOUT = 10000; // Changed from 2000 to 10000
+const DEFAULT_INITIAL_TIMEOUT = 10000;
 
 export interface TerminalSession {
   pid: number;
@@ -32,8 +32,9 @@ export class TerminalManager {
     command: string,
     timeoutMs: number = DEFAULT_INITIAL_TIMEOUT,
     shell?: string,
-    cwd?: string
-  ): Promise<{ pid: number; initialOutput: string; isBlocked: boolean; error?: string }> {
+    cwd?: string,
+    awaitCompletion: boolean = false
+  ): Promise<{ pid: number; initialOutput: string; isBlocked: boolean; error?: string, exitCode?: number | null }> {
 
     const spawnOptions: SpawnOptions = {
       shell: shell || true, // Use specified shell or OS default
@@ -46,7 +47,7 @@ export class TerminalManager {
       const process = spawn(command, [], spawnOptions);
 
       if (!process.pid) {
-        return { pid: -1, initialOutput: 'Error: Failed to get process ID.', isBlocked: false, error: 'Failed to get process ID.' };
+        return { pid: -1, initialOutput: 'Error: Failed to get process ID.', isBlocked: false, error: 'Failed to get process ID.', exitCode: null };
       }
 
       const session: TerminalSession = {
@@ -78,20 +79,20 @@ export class TerminalManager {
         process.stdout?.on('data', onData);
         process.stderr?.on('data', onData);
 
-        const timer = setTimeout(() => {
+        const timer = awaitCompletion ? null : setTimeout(() => {
           if (!resolved) {
             resolved = true;
             session.isBlocked = true; // Mark as blocked (long-running)
-            resolve({ pid: process.pid!, initialOutput: initialOutputCollected, isBlocked: true });
+            resolve({ pid: process.pid!, initialOutput: initialOutputCollected, isBlocked: true, exitCode: null });
           }
         }, timeoutMs);
 
         process.on('error', (err) => {
           if (!resolved) {
             resolved = true;
-            clearTimeout(timer);
+            if (timer) clearTimeout(timer);
             this.sessions.delete(process.pid!);
-            resolve({ pid: process.pid!, initialOutput: initialOutputCollected + `\nError: ${err.message}`, isBlocked: false, error: err.message });
+            resolve({ pid: process.pid!, initialOutput: initialOutputCollected + `\nError: ${err.message}`, isBlocked: false, error: err.message, exitCode: null });
           } else {
             // If already resolved (e.g. timed out), just log the error or append to session output
             session.fullOutput += `\nProcess Error: ${err.message}`;
@@ -100,7 +101,7 @@ export class TerminalManager {
         });
 
         process.on('exit', (code, signal) => {
-          clearTimeout(timer);
+          if (timer) clearTimeout(timer);
           const finalOutputChunk = session.newOutputBuffer; // Grab any remaining output
 
           const completedInfo: CompletedSessionInfo = {
@@ -121,12 +122,12 @@ export class TerminalManager {
           this.sessions.delete(session.pid);
           if (!resolved) {
             resolved = true;
-            resolve({ pid: session.pid, initialOutput: initialOutputCollected + finalOutputChunk, isBlocked: false });
+            resolve({ pid: session.pid, initialOutput: initialOutputCollected + finalOutputChunk, isBlocked: false, exitCode: code });
           }
         });
       });
     } catch (error: any) {
-      return { pid: -1, initialOutput: `Error spawning command: ${error.message}`, isBlocked: false, error: error.message };
+      return { pid: -1, initialOutput: `Error spawning command: ${error.message}`, isBlocked: false, error: error.message, exitCode: null };
     }
   }
 
