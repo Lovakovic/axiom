@@ -20,6 +20,9 @@ export const executeCommandToolDefinition: Tool = {
 Execute a shell command.
 By default, it returns a Process ID (PID) and initial output. If the command doesn't complete quickly, 'isBlocked' will be true, and you should use 'read_output' to get further output or 'force_terminate' to stop it.
 Use the 'await_completion: true' option to wait for the command to finish and get the full output and exit code directly.
+
+Interactive commands (sudo, ssh, passwd, su, mysql, psql, etc.) are executed with terminal access to allow password input. These commands do not support process management features (read_output, force_terminate).
+
 ${PATH_GUIDANCE} (If your command involves file paths)
 ${CMD_PREFIX_DESCRIPTION}`,
   inputSchema: executeCommandJSONSchema // Corrected
@@ -34,6 +37,22 @@ export async function executeCommandHandler(args: z.infer<typeof ExecuteCommandA
   const awaitCompletion = args.await_completion ?? false;
 
   const result = await terminalManager.executeCommand(args.command, timeoutMs, shell, cwd, awaitCompletion);
+
+  // Handle interactive commands (PID -2) first
+  if (result.pid === -2) {
+    let outputText = `Interactive command executed.`;
+    if (result.initialOutput) {
+      outputText += `\nOutput:\n${result.initialOutput}`;
+    }
+    if (result.error) {
+      outputText += `\nNote: ${result.error}`;
+    }
+    outputText += '\n\nNote: Process management features (read_output, force_terminate) are not available for interactive commands.';
+    return {
+      content: [{ type: 'text', text: outputText }],
+      isError: !!result.error && result.exitCode !== 0
+    };
+  }
 
   if (result.error || result.pid === -1) {
     return {

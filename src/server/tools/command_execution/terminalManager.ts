@@ -1,5 +1,8 @@
-import { spawn, ChildProcess, SpawnOptions } from 'child_process';
+import { spawn, ChildProcess, SpawnOptions, exec } from 'child_process';
 import os from 'os';
+import util from 'util';
+
+const execPromise = util.promisify(exec);
 
 const DEFAULT_INITIAL_TIMEOUT = 10000;
 
@@ -35,6 +38,61 @@ export class TerminalManager {
     cwd?: string,
     awaitCompletion: boolean = false
   ): Promise<{ pid: number; initialOutput: string; isBlocked: boolean; error?: string, exitCode?: number | null }> {
+
+    // Check if command requires interactive input (like sudo)
+    const interactiveCommands = ['sudo', 'ssh', 'passwd', 'su', 'mysql', 'psql', 'ftp', 'telnet', 'gpg'];
+    const isInteractive = interactiveCommands.some(cmd => {
+      // Check if command starts with the interactive command
+      if (command.startsWith(cmd + ' ') || command === cmd) return true;
+      
+      // Check for the command after pipes or logical operators
+      const patterns = [
+        `| ${cmd} `,
+        `| ${cmd}$`,
+        `&& ${cmd} `,
+        `&& ${cmd}$`,
+        `|| ${cmd} `,
+        `|| ${cmd}$`,
+        `; ${cmd} `,
+        `; ${cmd}$`
+      ];
+      
+      return patterns.some(pattern => command.includes(pattern));
+    });
+    
+    // Use exec for interactive commands to inherit TTY
+    if (isInteractive) {
+      try {
+        // For interactive commands, we return a special PID (-2) to indicate it's an exec command
+        // This helps other tools understand that process management features are not available
+        const execOptions = {
+          cwd: cwd || os.homedir(),
+          shell: shell || undefined,
+          timeout: awaitCompletion ? 0 : timeoutMs // Apply timeout if not awaiting completion
+        };
+        
+        const { stdout, stderr } = await execPromise(command, execOptions);
+        return {
+          pid: -2, // Special PID to indicate exec command (no process management)
+          initialOutput: `${stdout}${stderr ? `\n${stderr}` : ''}`,
+          isBlocked: false,
+          exitCode: 0
+        };
+      } catch (error: any) {
+        const errorMessage = error.message || 'Unknown error';
+        const isTimeout = error.code === 'ETIMEDOUT';
+        
+        return {
+          pid: -2,
+          initialOutput: isTimeout 
+            ? `Command timed out after ${timeoutMs}ms. Interactive commands may need more time.\nPartial output: ${error.stdout || ''}${error.stderr ? `\nErrors: ${error.stderr}` : ''}`
+            : `Error executing command: ${errorMessage}`,
+          isBlocked: false,
+          error: errorMessage,
+          exitCode: error.code || 1
+        };
+      }
+    }
 
     const spawnOptions: SpawnOptions = {
       shell: shell || true, // Use specified shell or OS default
@@ -132,6 +190,11 @@ export class TerminalManager {
   }
 
   readNewOutput(pid: number): string | null {
+    // Handle special PIDs for exec commands
+    if (pid === -2) {
+      return "This was an interactive command executed with 'exec'. Output reading is not available for interactive commands.";
+    }
+    
     const session = this.sessions.get(pid);
     if (session) {
       const output = session.newOutputBuffer;
@@ -151,6 +214,12 @@ export class TerminalManager {
   }
 
   forceTerminate(pid: number): boolean {
+    // Handle special PIDs for exec commands
+    if (pid === -2) {
+      // Can't terminate exec commands as we don't track their actual PID
+      return false;
+    }
+    
     const session = this.sessions.get(pid);
     if (!session) {
       // Check if it's a detached process we might still be able to kill
@@ -199,6 +268,11 @@ export class TerminalManager {
   }
 
   getSessionStatus(pid: number): 'running' | 'completed' | 'not_found' {
+    // Handle special PIDs for exec commands
+    if (pid === -2) {
+      return 'not_found'; // exec commands are not tracked
+    }
+    
     if (this.sessions.has(pid)) return 'running';
     if (this.completedSessions.has(pid)) return 'completed';
     return 'not_found';

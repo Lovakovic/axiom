@@ -412,6 +412,192 @@ describe('Command Execution Tool', () => {
     });
   });
 
+  describe('Interactive commands', () => {
+    it('should detect and handle sudo commands', async () => {
+      // Use a command that will fail quickly to avoid actual password prompts
+      const args: z.infer<typeof ExecuteCommandArgsSchema> = {
+        command: 'sudo --non-interactive echo "test"',
+        timeout_ms: 5000
+      };
+
+      const result = await executeCommandHandler(args);
+      // Interactive commands might fail due to no terminal
+      
+      const textContent = result.content[0];
+      if (textContent.type !== 'text') return;
+      const text = textContent.text;
+      expect(text).toContain('Interactive command executed');
+      expect(text).toContain('Process management features (read_output, force_terminate) are not available');
+    });
+
+    it('should detect interactive commands in pipelines', async () => {
+      const args: z.infer<typeof ExecuteCommandArgsSchema> = {
+        command: 'echo "password" | sudo --non-interactive -S echo "test"',
+        timeout_ms: 5000
+      };
+
+      const result = await executeCommandHandler(args);
+      // Result might have error due to non-interactive mode
+      
+      const textContent = result.content[0];
+      if (textContent.type !== 'text') return;
+      const text = textContent.text;
+      expect(text).toContain('Interactive command executed');
+    });
+
+    it('should detect interactive commands in command chains', async () => {
+      const args: z.infer<typeof ExecuteCommandArgsSchema> = {
+        command: 'echo "test" && sudo --non-interactive echo "test2"',
+        timeout_ms: 5000
+      };
+
+      const result = await executeCommandHandler(args);
+      // Result might have error due to non-interactive mode
+      
+      const textContent = result.content[0];
+      if (textContent.type !== 'text') return;
+      const text = textContent.text;
+      expect(text).toContain('Interactive command executed');
+    });
+
+    it('should handle other interactive commands', async () => {
+      // Use commands that will fail quickly without actual interaction
+      const interactiveCommands = [
+        'ssh -o BatchMode=yes -o ConnectTimeout=1 nonexistent.host',
+        'mysql --connect-timeout=1 -h nonexistent.host',
+        'psql -h nonexistent.host --connect-timeout=1'
+      ];
+      
+      for (const command of interactiveCommands) {
+        const args: z.infer<typeof ExecuteCommandArgsSchema> = {
+          command,
+          timeout_ms: 2000
+        };
+
+        const result = await executeCommandHandler(args);
+        const textContent = result.content[0];
+        if (textContent.type !== 'text') continue;
+        const text = textContent.text;
+        expect(text).toContain('Interactive command executed');
+      }
+    });
+
+    it('should not treat similar non-interactive commands as interactive', async () => {
+      const nonInteractiveCommands = [
+        'echo "sudo test"',
+        'grep sudo /dev/null 2>/dev/null || true',  // Use /dev/null to avoid file not found
+        'echo "*sudo*"'  // Simpler command that won't take long
+      ];
+      
+      for (const command of nonInteractiveCommands) {
+        const args: z.infer<typeof ExecuteCommandArgsSchema> = {
+          command,
+          timeout_ms: 1000
+        };
+
+        const result = await executeCommandHandler(args);
+        const textContent = result.content[0];
+        if (textContent.type !== 'text') continue;
+        const text = textContent.text;
+        expect(text).not.toContain('Interactive command executed');
+        expect(text).toContain('Command started with PID');
+      }
+    }, 10000);  // Increase test timeout
+
+    it('should handle timeout for interactive commands', async () => {
+      const args: z.infer<typeof ExecuteCommandArgsSchema> = {
+        command: 'sudo --non-interactive sleep 5',
+        timeout_ms: 1000,
+        await_completion: false
+      };
+
+      const result = await executeCommandHandler(args);
+      // Interactive commands with exec might timeout or fail
+      const textContent = result.content[0];
+      if (textContent.type === 'text') {
+        expect(textContent.text).toMatch(/Interactive command executed|timed out|password is required/);
+      }
+    });
+
+    it('should return special PID -2 for interactive commands', async () => {
+      const args: z.infer<typeof ExecuteCommandArgsSchema> = {
+        command: 'sudo --non-interactive echo "test"',
+        timeout_ms: 5000
+      };
+
+      const result = await executeCommandHandler(args);
+      // Result might have error due to non-interactive mode
+      
+      // The PID -2 is internal, but we can verify the behavior
+      const textContent = result.content[0];
+      if (textContent.type !== 'text') return;
+      const text = textContent.text;
+      expect(text).not.toContain('PID -2'); // Should not expose internal PID
+      expect(text).toContain('Interactive command executed');
+    });
+  });
+
+  describe('Process management with interactive commands', () => {
+    it('should handle read_output for interactive commands', async () => {
+      const readArgs: z.infer<typeof ReadOutputArgsSchema> = {
+        pid: -2, // Special PID for interactive commands
+        timeout_ms: 1000
+      };
+
+      const readResult = await readOutputHandler(readArgs);
+      expect(readResult.isError).toBeFalsy();
+      const textContent = readResult.content[0];
+      if (textContent.type === 'text') {
+        expect(textContent.text).toContain('This was an interactive command');
+        expect(textContent.text).toContain('Output reading is not available');
+      }
+    });
+
+    it('should handle force_terminate for interactive commands', async () => {
+      const terminateArgs: z.infer<typeof ForceTerminateArgsSchema> = {
+        pid: -2 // Special PID for interactive commands
+      };
+
+      const terminateResult = await forceTerminateHandler(terminateArgs);
+      expect(terminateResult.isError).toBeFalsy();
+      const terminateContent = terminateResult.content[0];
+      if (terminateContent.type === 'text') {
+        expect(terminateContent.text).toContain('Failed to send termination signal');
+      }
+    });
+
+    it('should not list interactive commands in active sessions', async () => {
+      // First, clean up any existing sessions
+      const initialList = await listSessionsHandler({});
+      if (initialList.content[0].type === 'text' && initialList.content[0].text.includes('PID:')) {
+        // Extract and terminate any existing processes
+        const pidMatches = initialList.content[0].text.matchAll(/PID: (\d+)/g);
+        for (const match of pidMatches) {
+          await forceTerminateHandler({ pid: parseInt(match[1]) });
+        }
+        // Wait for cleanup
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      // Execute an interactive command
+      await executeCommandHandler({
+        command: 'sudo --non-interactive echo "test"',
+        timeout_ms: 5000
+      });
+
+      // List sessions should not include it
+      const listResult = await listSessionsHandler({});
+      const textContent = listResult.content[0];
+      if (textContent.type === 'text') {
+        // Interactive commands should not be tracked in sessions
+        expect(textContent.text).toMatch(/No active command sessions|Active sessions/);
+        if (textContent.text.includes('Active sessions')) {
+          expect(textContent.text).not.toContain('sudo');
+        }
+      }
+    });
+  });
+
   describe('Integration scenarios', () => {
     it('should handle full lifecycle: execute, read, terminate', async () => {
       const command = os.platform() === 'win32'
