@@ -75,7 +75,8 @@ export class CLI {
     const { spawn } = require('child_process');
     this.serverProcess = spawn('node', ['dist/server/index.js'], {
       detached: true,
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, NODE_NO_WARNINGS: '1' }
     });
 
     this.serverProcess?.on('error', async (err) => {
@@ -91,7 +92,12 @@ export class CLI {
     });
 
     this.mcpClient = new MCPClient();
-    await this.mcpClient.connect("node", ["dist/server/index.js"]);
+    await this.mcpClient.connect("node", ["dist/server/index.js"], { 
+      env: Object.fromEntries(
+        Object.entries({ ...process.env, NODE_NO_WARNINGS: '1' })
+          .filter(([_, v]) => v !== undefined) as [string, string][]
+      )
+    });
     await this.agentManager.init(this.mcpClient);
 
     if (!this.agentManager.currentAgentKey) {
@@ -197,7 +203,8 @@ export class CLI {
     const { spawn } = require('child_process');
     this.serverProcess = spawn('node', ['dist/server/index.js'], {
       detached: true,
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, NODE_NO_WARNINGS: '1' }
     });
     await new Promise(resolve => setTimeout(resolve, 1000));
     await this.reconnect();
@@ -255,7 +262,8 @@ export class CLI {
       const { spawn } = require('child_process');
       this.serverProcess = spawn('node', ['dist/server/index.js'], {
         detached: true,
-        stdio: ['pipe', 'pipe', 'pipe']
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, NODE_NO_WARNINGS: '1' }
       });
       this.serverProcess?.on('error', async (err) => {
         await this.logger.error('RECONNECT', 'New server process error', { error: err.message });
@@ -265,7 +273,12 @@ export class CLI {
 
       await this.logger.debug('RECONNECT', 'Creating new MCP client');
       this.mcpClient = new MCPClient();
-      const connectPromise = this.mcpClient.connect("node", ["dist/server/index.js"]);
+      const connectPromise = this.mcpClient.connect("node", ["dist/server/index.js"], { 
+        env: Object.fromEntries(
+          Object.entries({ ...process.env, NODE_NO_WARNINGS: '1' })
+            .filter(([_, v]) => v !== undefined) as [string, string][]
+        )
+      });
       const timeoutPromise = new Promise((_, reject) => { setTimeout(() => reject(new Error('Connection timeout')), 5000); });
       try {
         await Promise.race([connectPromise, timeoutPromise]);
