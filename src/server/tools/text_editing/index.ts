@@ -13,7 +13,7 @@ import { editBlockJSONSchema, EditBlockArgsSchema } from "./schemas";
 import { findBestFuzzyMatch, highlightDifferences } from "./fuzzySearch";
 import os from "os";
 
-const FUZZY_SIMILARITY_THRESHOLD = 0.85;
+const FUZZY_SIMILARITY_THRESHOLD = 0.8;
 
 export const editBlockToolDefinition: Tool = {
   name: "edit_file_block",
@@ -92,7 +92,7 @@ export async function editBlockHandler(args: z.infer<typeof EditBlockArgsSchema>
         return { content: [{ type: 'text', text: `${message} Fuzzy matching not enabled or not applicable. No changes made.` }], isError: true };
       }
 
-      if (useFuzzy || occurrences.length === 0) { // Attempt fuzzy if enabled OR if no exact matches at all
+      if (useFuzzy && occurrences.length === 0) { // Attempt fuzzy only if enabled AND no exact matches found
         const fuzzy = findBestFuzzyMatch(fileContent, normalizedOldText);
         message += `\nAttempting fuzzy match for 'old_text'. Best fuzzy match found (similarity: ${(fuzzy.similarity * 100).toFixed(1)}%):`;
         const diff = highlightDifferences(normalizedOldText, fuzzy.value);
