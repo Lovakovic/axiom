@@ -1,8 +1,6 @@
 import dotenv from "dotenv";
 import os from "os";
 import { AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { DynamicStructuredTool } from "@langchain/core/tools";
-import { convertJSONSchemaDraft7ToZod } from "../shared/util/draftToZod";
 import { MCPClient } from "./mcp.client";
 import { ToolNode } from "./util/tool-node";
 import { Annotation, messagesStateReducer, StateGraph } from "@langchain/langgraph";
@@ -37,37 +35,7 @@ export abstract class BaseAgent {
   protected abstract getProviderKey(): string;
 
   protected async commonSetup(): Promise<{ allTools: any[]; systemMessage: SystemMessage; toolNode: any }> {
-    const tools = await this.mcpClient.getTools();
-    const wrappedMCPTools = tools.map((mcpTool) => {
-      return new DynamicStructuredTool({
-        name: mcpTool.name,
-        description: mcpTool.description ?? "",
-        func: async (args: Record<string, unknown>) => {
-          try {
-            const content = (await this.mcpClient.executeTool(mcpTool.name, args)).content;
-            return content.map((item) => {
-              // Map MCP's image content to LangChain's image_url format
-              if (item.type === 'image') {
-                return {
-                  type: 'image_url',
-                  image_url: {
-                    url: `data:${item.mimeType};base64,${item.data}`,
-                  }
-                }
-              }
-              return item;
-            });
-
-          } catch (error) {
-            if (error instanceof Error && error.message?.includes("Connection closed")) {
-              return "Tool execution was interrupted.";
-            }
-            throw error;
-          }
-        },
-        schema: convertJSONSchemaDraft7ToZod(JSON.stringify(mcpTool.inputSchema)),
-      });
-    });
+    const wrappedMCPTools = await ToolNode.wrapMCPTools(this.mcpClient);
     const allTools = [...wrappedMCPTools];
     const systemMessage = await this.getSystemMessage(this.mcpClient);
     const toolNode = await ToolNode.create(allTools, {handleToolErrors: true});

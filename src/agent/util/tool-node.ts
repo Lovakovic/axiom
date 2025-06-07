@@ -1,12 +1,26 @@
-import {AIMessage, BaseMessage, isBaseMessage, ToolMessage} from "@langchain/core/messages";
+import {AIMessage, BaseMessage, isBaseMessage, ToolMessage, HumanMessage, MessageContentComplex} from "@langchain/core/messages";
 import {RunnableConfig} from "@langchain/core/runnables";
 import {isCommand, isGraphInterrupt} from "@langchain/langgraph";
-import {StructuredToolInterface} from "@langchain/core/tools";
+import {StructuredToolInterface, DynamicStructuredTool} from "@langchain/core/tools";
 import {Logger} from '../../logger';
 import {z, ZodObject, ZodType} from 'zod';
 import {zodToJsonSchema} from 'zod-to-json-schema';
 import {StateAnnotation} from "../base";
 import {ToolNodeOptions} from "@langchain/langgraph/prebuilt";
+import {MCPClient} from "../mcp.client";
+import {Tool, ImageContent as MCPImageContent, TextContent as MCPTextContent} from "@modelcontextprotocol/sdk/types.js";
+import {convertJSONSchemaDraft7ToZod} from "../../shared/util/draftToZod";
+
+// Type guards for MCP content types
+type MCPContentItem = MCPTextContent | MCPImageContent | Record<string, any>;
+
+function isMCPImageContent(item: MCPContentItem): item is MCPImageContent {
+  return item.type === 'image' && 'data' in item && 'mimeType' in item;
+}
+
+function isMCPTextContent(item: MCPContentItem): item is MCPTextContent {
+  return item.type === 'text' && 'text' in item;
+}
 
 export class ToolNode {
   private static tools: StructuredToolInterface[] = [];
@@ -18,6 +32,28 @@ export class ToolNode {
     ToolNode.tools = tools;
     ToolNode.handleToolErrors = options?.handleToolErrors ?? true;
     return new ToolNode();
+  }
+
+  static async wrapMCPTools(mcpClient: MCPClient): Promise<StructuredToolInterface[]> {
+    const tools = await mcpClient.getTools();
+    return tools.map((mcpTool) => {
+      return new DynamicStructuredTool({
+        name: mcpTool.name,
+        description: mcpTool.description ?? "",
+        func: async (args: Record<string, unknown>) => {
+          try {
+            const result = await mcpClient.executeTool(mcpTool.name, args);
+            return result.content;
+          } catch (error) {
+            if (error instanceof Error && error.message?.includes("Connection closed")) {
+              return "Tool execution was interrupted.";
+            }
+            throw error;
+          }
+        },
+        schema: convertJSONSchemaDraft7ToZod(JSON.stringify(mcpTool.inputSchema)),
+      });
+    });
   }
 
   private static createToolMessage(tool: StructuredToolInterface, output: any, call: {
@@ -205,7 +241,10 @@ export class ToolNode {
         numOutputs: outputs.length,
         outputTypes: outputs.map(o => (o as any)?.constructor?.name ?? typeof o)
       });
-      return { messages: outputs as BaseMessage[] };
+      
+      // Process outputs to handle image content
+      const processedMessages = ToolNode.processToolMessagesForImages(outputs as BaseMessage[]);
+      return { messages: processedMessages };
     }
 
     await ToolNode.logger.debug('TOOL_NODE', 'Processing command outputs', {
@@ -213,8 +252,69 @@ export class ToolNode {
       hasCommands: true
     });
 
-    return {
-      messages: outputs as BaseMessage[]
-    };
+    // Process outputs to handle image content
+    const processedMessages = ToolNode.processToolMessagesForImages(outputs as BaseMessage[]);
+    return { messages: processedMessages };
+  }
+
+  private static processToolMessagesForImages(messages: BaseMessage[]): BaseMessage[] {
+    const processedMessages: BaseMessage[] = [];
+    
+    for (const message of messages) {
+      // Check if this is a tool message with image content
+      if (message.getType() === "tool" && Array.isArray(message.content)) {
+        // Cast content items to MCPContentItem for type checking
+        const mcpContent = message.content as MCPContentItem[];
+        const hasImageContent = mcpContent.some(item => isMCPImageContent(item));
+        
+        if (hasImageContent) {
+          // Extract image content and convert to LangChain format
+          const imageContent = mcpContent
+            .filter(isMCPImageContent)
+            .map(item => ({
+              type: "image_url" as const,
+              image_url: {
+                url: `data:${item.mimeType};base64,${item.data}`,
+              }
+            }));
+          
+          // Keep only non-image content
+          const textContent = mcpContent.filter(item => !isMCPImageContent(item));
+          
+          // Create a modified tool message without images
+          const modifiedToolMessage = new ToolMessage({
+            name: (message as ToolMessage).name,
+            tool_call_id: (message as ToolMessage).tool_call_id,
+            content: textContent.length > 0 ? textContent : [{
+              type: "text",
+              text: "This tool returned an image. The image is in the next human message."
+            }]
+          });
+          
+          processedMessages.push(modifiedToolMessage);
+          
+          // Create a human message with the image content
+          const imageHumanMessage = new HumanMessage({
+            content: [
+              {
+                type: "text",
+                text: "[System: This message was programmatically inserted to display an image returned by a tool]"
+              },
+              ...imageContent
+            ]
+          });
+          
+          processedMessages.push(imageHumanMessage);
+        } else {
+          // No image content, keep the message as is
+          processedMessages.push(message);
+        }
+      } else {
+        // Not a tool message, keep as is
+        processedMessages.push(message);
+      }
+    }
+    
+    return processedMessages;
   }
 }
