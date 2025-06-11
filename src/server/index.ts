@@ -1,7 +1,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
-  CallToolRequestSchema,
+  CallToolRequestSchema, CallToolResult, // Keep CallToolResult if needed for casting
   GetPromptRequestSchema,
   ListPromptsRequestSchema,
   ListResourcesRequestSchema,
@@ -9,10 +9,11 @@ import {
   ReadResourceRequestSchema,
   ServerCapabilities
 } from "@modelcontextprotocol/sdk/types.js";
-import { tools, toolsMap } from "./tools";
+import { tools, callToolAndParseArgs } from "./tools"; // Import the new function
 import { promptHandlers, SYSTEM_PROMPTS } from "./prompts";
 import { PromptHandlers } from "./prompts/types.js";
 import { ResourceManager } from "./resources";
+
 
 export function createServer() {
   const capabilities: ServerCapabilities = {
@@ -35,7 +36,6 @@ export function createServer() {
     }
   );
 
-  // Initialize resource manager
   const resourceManager = new ResourceManager();
 
   // Resource handlers
@@ -53,15 +53,23 @@ export function createServer() {
 
   // Tool handlers
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools };
+    return { tools }; // Still use the exported tools array
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const tool = toolsMap.get(request.params.name);
-    if (!tool) {
-      throw new Error(`Unknown tool: ${request.params.name}`);
+    // Delegate to the new function in tools/index.ts
+    try {
+      return await callToolAndParseArgs(request.params.name, request.params.arguments);
+    } catch (error: any) {
+      // This catch is for unexpected errors not handled by callToolAndParseArgs's try-catch
+      // (e.g., if callToolAndParseArgs itself throws before its own try-catch)
+      // or if it re-throws.
+      console.error(`Unhandled error in CallToolRequest for ${request.params.name}:`, error);
+      return {
+        content: [{ type: 'text', text: `An unexpected server error occurred while calling tool ${request.params.name}: ${error.message}` }],
+        isError: true,
+      } as CallToolResult; // Ensure it conforms to CallToolResult
     }
-    return tool.handler(request.params.arguments);
   });
 
   // Prompt handlers
@@ -75,13 +83,11 @@ export function createServer() {
     if (!promptHandler) {
       throw new Error(`Prompt not found: ${name}`);
     }
-
     return promptHandler(request.params.arguments || {});
   });
 
   const cleanup = async () => {
     // Add any cleanup logic here
-    // For example, closing database connections, cleaning up file watchers, etc.
   };
 
   return { server, cleanup };
@@ -95,7 +101,6 @@ if (require.main === module) {
 
     await server.connect(transport);
 
-    // Handle cleanup on process termination
     process.on("SIGINT", async () => {
       await cleanup();
       await server.close();

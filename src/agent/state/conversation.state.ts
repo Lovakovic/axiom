@@ -1,5 +1,6 @@
 import { AIMessageChunk, BaseMessage } from '@langchain/core/messages';
 import { v4 } from 'uuid';
+import { filterMessageContent } from '../util/content-filter';
 
 export class ConversationState {
   private static instance: ConversationState;
@@ -94,6 +95,15 @@ export class ConversationState {
   public getMessages(): BaseMessage[] {
     this.finalizeBuffers();
     return [...this.messages]; // Return a copy
+  }
+
+  /**
+   * Returns the complete conversation history with thinking content filtered out.
+   * This is useful for providers that don't support Anthropic's thinking content.
+   */
+  public getMessagesFiltered(): BaseMessage[] {
+    this.finalizeBuffers();
+    return this.messages.map(message => filterMessageContent(message));
   }
 
   /**

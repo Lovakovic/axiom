@@ -10,6 +10,10 @@ import { MCPClient } from "../mcp.client";
 dotenv.config();
 
 export class Anthropic extends BaseAgent {
+  protected getProviderKey(): string {
+    return "claude";
+  }
+
   protected getProviderSpecificPrompt(): string {
     return PROMPT;
   }

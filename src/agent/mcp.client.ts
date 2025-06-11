@@ -30,8 +30,8 @@ export class MCPClient {
     );
   }
 
-  async connect(command: string, args: string[] = []) {
-    this.transport = new StdioClientTransport({command, args});
+  async connect(command: string, args: string[] = [], options?: { env?: Record<string, string> }) {
+    this.transport = new StdioClientTransport({command, args, env: options?.env});
     await this.client.connect(this.transport);
   }
 

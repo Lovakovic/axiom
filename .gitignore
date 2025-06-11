@@ -3,3 +3,4 @@
 /dist/
 .env
 /gc_key.json
+/latest_run.txt
