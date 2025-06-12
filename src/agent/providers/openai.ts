@@ -21,7 +21,7 @@ export class OpenAI extends BaseAgent {
   protected createModel(allTools: StructuredToolInterface[]): Runnable<BaseLanguageModelInput, AIMessageChunk, ChatOpenAICallOptions> {
     return new ChatOpenAI({
       apiKey: process.env.OPENAI_API_KEY,
-      model: "o4-mini",
+      model: "o3",
       streaming: true,
     }).bindTools(allTools);
   }
