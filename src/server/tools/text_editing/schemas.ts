@@ -5,7 +5,7 @@ export const editBlockJSONSchema: JSONSchemaDraft7 = {
   type: "object",
   properties: {
     file_path: {type: "string", description: "Path to the file to edit."},
-    old_text: {type: "string", description: "The exact text block to find and replace. Can be multi-line."},
+    old_text: {type: "string", description: "The text block to find and replace as it appears in the file. Can be multi-line. Do not add extra escaping - quotes and special characters should match exactly as they appear in the file content."},
     new_text: {type: "string", description: "The new text block to replace the old_text with. Can be multi-line."},
     expected_replacements: {
       type: "number",

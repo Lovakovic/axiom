@@ -20,6 +20,7 @@ export const editBlockToolDefinition: Tool = {
   description: `
 Edit a block of text within a file.
 Finds 'old_text' and replaces it with 'new_text'.
+IMPORTANT: Copy text EXACTLY as it appears in the file - do not add extra backslashes or escape sequences.
 Supports exact matches and optional fuzzy matching if exact fails or count mismatches.
 Line endings are auto-detected and preserved.
 WARNING: 'new_text' exceeding line limits (default ${DEFAULT_FILE_WRITE_LINE_LIMIT}) will be REJECTED for this tool.
