@@ -11,12 +11,15 @@ module.exports = {
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov'],
   modulePathIgnorePatterns: ['<rootDir>/dist/'],
+  setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
+  moduleNameMapper: {
+    '^@modelcontextprotocol/sdk/(.*)$': '<rootDir>/tests/unit/mocks/mock-mcp-sdk.ts',
+  },
   transform: {
     '^.+\\.(ts|tsx)$': 'ts-jest',
-    '^.+\\.js$': 'babel-jest'
   },
   transformIgnorePatterns: [
-    '/node_modules/(?!@modelcontextprotocol)'
+    '/node_modules/',
   ],
   testPathIgnorePatterns: ['/node_modules/', '/dist/']
 };

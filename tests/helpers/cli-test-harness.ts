@@ -3,7 +3,7 @@ import { CLI } from '../../src/cli';
 import { MockMCPClient } from '../unit/mocks/mock-mcp-client';
 import { MockAgent, MockAgentManager } from '../unit/mocks/mock-agent';
 import { simpleMockResponse } from '../unit/mocks/mock-stream-events';
-import { ILogger } from "../../src/logger";
+import { ILogger, LogEntry } from "../../src/logger";
 
 // Ensure required environment variables are set for tests
 process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || 'dummy-openai-key';
@@ -108,6 +108,11 @@ export class MockLogger implements ILogger {
   logs: any[] = [];
   private static instance: MockLogger;
 
+  // Reset method for testing
+  static reset() {
+    MockLogger.instance = new MockLogger();
+  }
+
   async info(category: string, message: string, metadata?: Record<string, any>): Promise<void> {
     this.logs.push({ level: 'INFO', category, message, metadata });
   }
@@ -122,6 +127,14 @@ export class MockLogger implements ILogger {
 
   async error(category: string, message: string, metadata?: Record<string, any>): Promise<void> {
     this.logs.push({ level: 'ERROR', category, message, metadata });
+  }
+
+  isActive(): boolean {
+    return true; // Mock logger is always active for tests
+  }
+
+  getArchivedLogs(): LogEntry[] {
+    return [...this.logs]; // Return a copy of all logged messages
   }
 
   static getInstance(): ILogger {
@@ -153,6 +166,10 @@ export class CLITestHarness {
     // Save original global process
     this.originalProcess = global.process;
 
+    // Ensure MockLogger singleton is initialized before use
+    MockLogger.reset();
+    this.mockLogger = MockLogger.getInstance() as MockLogger;
+
     // Set up mocks
     this.mockReadline = new MockReadline();
     this.mockMCPClient = new MockMCPClient();
@@ -166,7 +183,6 @@ export class CLITestHarness {
       openai: mockOpenAIAgent
     });
 
-    this.mockLogger = MockLogger.getInstance() as MockLogger;
     this.mockProcess = new MockProcess();
 
     // Replace global process with our mock to supply proper stdin and stdout.
@@ -219,6 +235,8 @@ export class EnhancedCLITestHarness extends CLITestHarness {
     anthropic: simpleMockResponse,
     openai: simpleMockResponse
   }) {
+    // Need to ensure MockLogger is initialized before calling super
+    MockLogger.reset();
     super(mockResponses);
 
     // Replace the standard mockReadline with our enhanced version

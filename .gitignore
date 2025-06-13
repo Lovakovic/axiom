@@ -3,4 +3,5 @@
 /dist/
 .env
 /gc_key.json
+/coverage/
 /latest_run.txt

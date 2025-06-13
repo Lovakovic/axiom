@@ -1,4 +1,4 @@
-import {afterEach, describe, expect, it} from '@jest/globals';
+import {afterEach, beforeEach, describe, expect, it} from '@jest/globals';
 import {
   executeCommandHandler,
   forceTerminateHandler,
@@ -13,9 +13,16 @@ import {
 } from '../../../src/server/tools/command_execution/schemas';
 import os from 'os';
 
+// Access global mock utilities from setup.ts
+
 describe('Command Execution Tool', () => {
   // Keep track of PIDs for cleanup
   let activePids: number[] = [];
+
+  beforeEach(() => {
+    // Reset mock processes before each test
+    (global as any).resetMockProcesses();
+  });
 
   afterEach(async () => {
     // Clean up any remaining processes
