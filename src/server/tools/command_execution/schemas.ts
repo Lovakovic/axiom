@@ -4,7 +4,7 @@ import { convertJSONSchemaDraft7ToZod } from '../../../shared/util/draftToZod'; 
 export const executeCommandJSONSchema: JSONSchemaDraft7 = {
   type: "object",
   properties: {
-    command: {type: "string", description: "The command to execute."},
+    command: {type: "string", description: "The shell command to execute. When the command contains user-provided data or special characters, ensure proper escaping for shell safety. Use quotes around arguments containing spaces or special characters."},
     timeout_ms: {
       type: "number",
       description: "Initial timeout in milliseconds to wait for the command to potentially complete or yield first output. If it times out, it's considered a long-running command. This is ignored if 'await_completion' is true."

@@ -20,7 +20,7 @@ export class VertexAI extends BaseAgent {
 
   protected createModel(allTools: StructuredToolInterface[]): Runnable<BaseLanguageModelInput, AIMessageChunk> {
     return new ChatVertexAI({
-      model: "gemini-2.5-pro-preview-05-06",
+      model: "gemini-2.5-pro",
       temperature: 0,
       streaming: true,
       maxRetries: 2,
@@ -57,7 +57,9 @@ const GEMINI_SYSTEM_PROMPT = `You are a sophisticated and highly autonomous AI a
 2.  **Plan (Formulate a Strategy):** Based on your exploration, create a clear, step-by-step plan. If the goal is ambiguous or you lack critical information after exploring, **ask the user for clarification.** It is better to ask than to execute a flawed plan.
 
 3.  **Act (Execute with Precision):** Choose the right tool for the job.
-    *   **\`edit_file_block\` is your preferred tool for modifying existing files.** It is precise and safe. Use it for targeted changes, refactoring, or correcting bugs. If an exact match fails, you may use its fuzzy matching capability, but state this in your reasoning.
+    *   **\`edit_file_block\` is your preferred tool for modifying existing files.** It is precise and safe. Use it for targeted changes, refactoring, or correcting bugs. 
+        *   **CRITICAL: When using \`edit_file_block\`, copy the \`old_text\` EXACTLY as it appears in the file. Do NOT add extra backslashes before quotes or other characters. The tool expects the literal file content, not JSON-escaped strings.**
+        *   If an exact match fails, you may use its fuzzy matching capability, but state this in your reasoning.
     *   **\`write_file\`** should be used for creating new files or when a complete file rewrite is necessary and more efficient than \`edit_file_block\`. Be aware of its line-limit; for larger content, split it into multiple 'append' calls after an initial 'rewrite'.
     *   **\`execute_command\`** is for system interactions, running builds, tests, or other commands where a specialized tool is not available.
         *   For quick commands, use \`await_completion: true\` to get the result directly.
@@ -88,5 +90,21 @@ const GEMINI_SYSTEM_PROMPT = `You are a sophisticated and highly autonomous AI a
 3.  Ask for confirmation *only* before executing potentially destructive, irreversible operations (e.g., deleting multiple user files, making major system-wide changes). For most development tasks, proceed autonomously based on your plan.
 4.  Preserve existing functionality and coding style unless explicitly told to change it. Your modifications should be clean and consistent.
 5.  You can see the user's desktop windows with \`list_open_windows\` and capture their content with \`view_window_content\`. Use this to understand the user's context if they are referencing something on their screen, but do not interact with the GUI unless it is the most logical path to a solution.
+
+**TOOL ARGUMENT FORMATTING**
+
+Different tools require different string formatting approaches:
+
+1. For \`edit_file_block\` and file content tools:
+   - Copy text content EXACTLY as it appears in files
+   - Do NOT add extra escape sequences or backslashes
+   - The tool system handles JSON encoding automatically
+   - Example: If a file contains \`console.log("Hello")\`, pass it exactly like that, not as \`console.log(\\"Hello\\")\`
+
+2. For \`execute_command\` and shell commands:
+   - DO use proper shell escaping for safety
+   - Quote arguments containing spaces or special characters
+   - Example: \`grep "search term" file.txt\` not \`grep search term file.txt\`
+   - Example: \`echo "Hello World"\` not \`echo Hello World\`
 
 Your primary goal is to be an effective, reliable, and safe assistant. Your intelligence is best demonstrated by your careful planning and precise execution.`;
