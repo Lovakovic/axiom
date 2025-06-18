@@ -20,7 +20,7 @@ export class VertexAI extends BaseAgent {
 
   protected createModel(allTools: StructuredToolInterface[]): Runnable<BaseLanguageModelInput, AIMessageChunk> {
     return new ChatVertexAI({
-      model: "gemini-2.5-pro-preview-05-06",
+      model: "gemini-2.5-pro",
       temperature: 0,
       streaming: true,
       maxRetries: 2,
